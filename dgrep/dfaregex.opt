@@ -1,0 +1,58 @@
+; Hand optimized version of dfaregex inner loop for Turbo C
+
+********** FAST version ****************************************
+
+; This speeds up the dfa search about 10% from the normal optimized version
+
+;	?debug	L 170
+	inc	di
+;******************* begin change
+@43:					;INNER LOOP ENTRY (changed)
+	mov	ax,word ptr [bp-4]	;prev_state
+	jmp	short @43a
+;;;;;;;;;;;;;;;;;;;; INNER LOOP BEGIN		;clocks in 80(1?|2)86
+@42:
+	mov	ax,si				;2
+	mov	bl,byte ptr [di]		;8+5=13
+	sub	bh,bh				;3
+	shl	bx,1				;2
+	mov	si,word ptr [bx+si]		;8+7=15
+	inc	di				;2
+@43a:
+	cmp	si,-4				;4
+	jb	@42				;16
+;;;;;;;;;;;;;;;;;;;; INNER LOOP END		;--- 57 clocks, 8 instr.
+	mov	word ptr [bp-4],ax	;prev_state
+;******************* end change
+;	?debug	L 185
+
+********** NORMAL VERSION ****************************************
+
+; This speeds up the dfa search about 20%
+
+;	?debug	L 170
+	inc	di
+;******************* begin change
+@43:	; INNER LOOP ENTRY (changed)
+	mov	ax,word ptr [bp-4]
+	sub	bh,bh
+	jmp	short @43a
+;;;;;;;;;;;;;;;;;;;; INNER LOOP BEGIN		;clocks in 80(1?|2)86
+@42:
+	mov	ax,si				;2
+	shl	si,1				;2
+	mov	si,word ptr DGROUP:_rbuf[si]	;9+9=18
+	mov	bl,byte ptr [di]		;8+5=13
+	mov	bl,byte ptr [bx+si]		;8+7=15
+	mov	si,bx				;2
+	inc	di				;2
+@43a:
+	cmp	si,252				;4
+	jb	@42				;16
+;;;;;;;;;;;;;;;;;;; INNER LOOP END		;--- 74 clocks, 9 instr.
+	mov	word ptr [bp-4],ax
+;******************* end change
+; Exit inner loop
+	cmp	si,255
+	jne	@44
+;	?debug	L 186

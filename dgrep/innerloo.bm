@@ -1,0 +1,13 @@
+Boyer-Moore inner loop compiled with GNU cc:
+
+for (; k <= p; k += delta0[*k])
+	;
+
+	cmpl r1,r2		;if k > p
+	jgtru L80		;  goto L80
+L73:
+	movzbl (r1),r0		;r0 = *k
+	addl2 (r8)[r0],r1	;k += delta0[r0]
+	cmpl r1,r2		;if k <= p
+	jlequ L73		;  goto L73
+L80:

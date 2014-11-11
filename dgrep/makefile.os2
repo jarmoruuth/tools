@@ -1,0 +1,48 @@
+######################################################################
+#
+#	Makefile for dgrep and test programs in OS/2
+#
+######################################################################
+
+dgrep:	dgrep.exe
+try:	try.exe
+
+MDL	= S
+
+WILDARG	= u:\bin\os2_16\msc60\libp\setargv.obj
+#WILDARG	= c:\cc\lib\setargv.obj
+
+CC	= cl
+CFLAGS	= -Ox -J -I\os2src\include -c -A$(MDL) -DECTYPE -W3 -DOS2
+
+LINK	= gmakelink link
+LFLAGS	= /NOE
+LIBS	= ..\lib\c$(MDL)os2.lib
+
+DFAOBJ	= dfaregex.obj dfa.obj calcpos.obj dfatree.obj regmust.obj set.obj clib.obj
+	  
+DGREPOBJ = dgrep.obj bm.obj $(DFAOBJ)
+
+dgrep.exe: $(DGREPOBJ)
+	$(LINK) $(LFLAGS) $(DGREPOBJ) $(WILDARG),,,$(LIBS),dgrep.def
+
+TRYOBJ = try.obj $(DFAOBJ)
+
+try.exe: $(TRYOBJ)
+	$(LINK) $(LFLAGS) $(TRYOBJ) $(LIBS)
+
+.c.obj:
+	$(CC) $(CFLAGS) $<
+
+dfa.h:		set.h
+
+dgrep.obj:	dgrep.c dfaregex.h dfa.h system.h
+bm.obj:		bm.c dfa.h system.h
+dfaregex.obj:	dfaregex.c dfaregex.h dfa.h system.h
+dfa.obj:	dfa.c dfa.h system.h
+calcpos.obj:	calcpos.c dfa.h system.h
+dfatree.obj:	dfatree.c dfa.h system.h
+regmust.obj:	regmust.c dfa.h system.h
+set.obj:	set.c set.h system.h
+clib.obj:	clib.c system.h
+try.obj:	try.c dfaregex.h

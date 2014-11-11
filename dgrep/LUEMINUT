@@ -1,0 +1,80 @@
+
+	DGREP - nopea egrep klooni
+
+Dgrep on Unixin egrepin kopio. Ohjelma toimii ainakin Linuxissa ja 
+Windowsissa. Lisäksi se on varsin helppo siirtää muihin
+ympäristöihin, joissa on ANSI C-kääntäjä. Dgrepin pitäsi olla varsin
+yhteensopiva vanhan egrepin kanssa lukuunottamatta muutamia optiota.
+
+Dgrep on varsin nopea. Nopeus perustuu siihen, että se käyttää
+etsittävän merkkijonon mukaan parasta mahdollista algoritmia. Jos
+etsittävässä merkkijonossa ei ole säännöllisiä lausekkeita, etsimiseen
+käytetään Boyer-Moore-algoritmia. Muussa tapauksessa dgrep rakentaa
+deterministisen tila-automaatin merkkijonon etsintään. Hakujen
+nopeuttamiseksi säännöllisestä lausekkeesta pyritään etsimään
+merkkijono, joka on pakko löytyä. Tätä merkkijonoa etsitään ensin
+Boyer-Moore-algoritmilla. Tila-automaatti käyttää ns. laiskaa
+evaluointia eli tarvittavat tilasiirtymät lasketaan vain jos niitä
+tarvitaan. Molemmat algoritmit ovat lineaarisia.
+
+Kirjoittamalla pelkkä dgrep saa lyhyemmän aputekstin ja kirjoittamalla
+dgrep -h saa seuraavan aputekstin:
+
+Usage: dgrep [options] {-f expression file | [-e] expression} [file...]
+Options: -An  n lines after the matching line are printed
+         -Bn  n lines before the matching line are printed
+         -b   filename is displayed only once before matches
+         -c   only a count of matching lines is printed
+         -d   only dfa is used for searching
+         -i   case insensitive match
+         -l   only names of files with matching lines are printed
+         -n   each line is preceded by its relative line number in file
+         -s   silent mode, nothing is printed except error messages
+         -t   all files that contain matches are touched
+         -v   all lines but those matching are printed
+         -x   exact, all characters in expression are taken literally
+         -z   verbose
+         -1-9 1-9 lines before and after the matching line are printed
+         -e expression, useful when expression begins with -
+         -f file that contains expression
+Regular expressions:                    .       any single character
+*       zero or more repeats            (...)   grouping
++       one or more repeats             ^       beginning of line
+?       zero or one repeat              $       end of line
+[...]   any character in set            \c     quote special character c
+[^...]  any character not in set        |       alternative ("or")
+
+Seuraavassa on vertailtu dgrepin ja systeemin egrepin nopeutta
+Bsd-Unixissa. Taulukossa on user- ja sys-ajat muutamalle testille, kun
+lähdetiedostona on ollut /usr/dict/words:
+
+		dgrep	system egrep
+'u.*nix'	0.3u	2.4u
+		0.4s	0.3s
+'first'		0.2u	2.5u
+		0.2s	0.2s
+'first|second'	1.8u	2.2u
+		0.3s	0.2s
+
+GNUegrepin (v.1.3) ja dgrepin nopeusvertailu PC:ssä. Testiaineistona on
+käytetty dgrepin sorsia kahteen kertaan luettuna, 32 tiedostoa ja 7544
+riviä. GNUegrepillä käytettiin aina optiota -E (== use Egrep syntax).
+
+			GNU egrep	dgrep
+    Int			11.8		 8.1
+-ic Int			13.4		 8.4
+    first|second	28.6		16.9
+-c  first|second	19.8		10.8	-- vähemmän tulostusta
+    Unsigned		10.6		 7.9
+
+--
+
+Dgrepin on tehnyt:
+
+Jarmo Ruuth
+jarmo (at) ruuth.net
+
+Osia dgrepistä on tehnyt myös:
+
+Petri Soini
+petri.soini (at) iki.fi

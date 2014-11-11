@@ -1,0 +1,15 @@
+DFA inner loop (FAST version) compiled with GNU cc:
+
+for (; cur_state < MAXTRAN; ) {
+	prev_state = cur_state;
+	cur_state = cur_state->tran[*s++];
+}
+
+	jbr L50
+L38:
+	movl r2,r7		;prev_state = cur_state
+	movzbl (r6)+,r0		;r0 = *s++
+	movl (r2)[r0],r2	;cur_state = cur_state->tran[r0]
+L50:
+	cmpl r2,$-5		;if cur_state < MAXTRAN
+	jlequ L38		;  goto L38

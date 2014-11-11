@@ -1,0 +1,160 @@
+
+        DGREP
+        -----
+
+Dgrep is a fast Unix egrep clone. Basically, it matches a regular
+expression to the lines from one or several input files and displays
+those lines that contain the regular expression. Dgrep understands the
+UNIX extended regular expressions (see usage in dgrep.c or dgrep -h).
+If no files are given, standard input is assumed. Although dgrep is
+egrep clone, there are some differences, e.g. currently not all option
+characters are same (but most of them are). Also few options are added,
+some of which are from the GNU grep (see usage in dgrep.c or dgrep -h
+for options).
+
+Return values:
+-------------
+
+0, if matches are found
+1, if no matches are found
+2, if syntax error or inaccessible files
+3, if internal error
+
+Portability:
+-----------
+
+Originally written for MS-DOS under Turbo C, but has been ported to
+Microsoft C 5.[01], OS/2, BSD UNIX 4.3 with gcc compiler and QNX with
+Computer Innovations C86 compiler. It runs also in Linux and Windows.
+This program should be relatively easy to port to any environment with 
+ANSI C compiler.
+
+Algorithms:
+----------
+
+Dgrep uses two algorithms to search expressions. Literal strings are
+searched with the Boyer-Moore algorithm and regular expressions are
+searched with a deterministic finite state automata. To speed up the
+searches literal strings from the regular expression are also searched
+with the Boyer-Moore algorithm. Dgrep uses a lazy evaluation technique
+for the deterministic finite state automata, so the state transitions
+are calculated only when they are actually needed.
+
+Algorithm to create DFA directly from the regular expression is
+described in the reference [1]. This implementation uses quite directly
+ideas and algorithms from that book. Also lazy evaluation technique is
+mentioned there but no algorithm is given. So lazy evaluation is based
+on my own ideas, which certainly need improvements. The fast version is
+modeled after the ideas from the reference [4].
+
+Boyer-Moore algorithm is from the James A. Wood's fastgrep
+implementation. It seems to be quite direct port from the original
+speed-ups suggested by Boyer and Moore in their original paper [7]. The
+modified initialization code is written by Petri Soini, and it should guarantee
+that the execution time is linear even in the worst case. The Boyer-Moore is
+modified version of the original algorithm and the guaranteed worst-case 
+performance is even better than that of the original one.
+
+Authors:
+-------
+
+Jarmo Ruuth wrote most of the code
+Petri Soini wrote modified Boyer-Moore initialization and some other things
+
+If you have any comments or suggestions or you find a bug, please email
+to the address:
+
+	jarmo (at) ruuth.net
+
+References:
+----------
+
+[1] A.V.Aho, R.Sethi, J.D.Ullman: 'Compilers, Principles, Techniques and 
+    Tools', Addison-Wesley 1986
+[2] A.V.Aho, M.J.Corasick: 'Fast pattern matching: An aid to bibliographic
+    search', Comm. ACM, June 1975
+[3] GNU grep, version 0.999b, June 1988
+[4] A.Hume: 'A Tale of Two Greps', Software - Practise and Experience,
+    November 1988
+[5] J.A.Woods: fastgrep implementation and discussion in the net, 1986
+
+Boyer-Moore-algorithm:
+
+[6] A.Apostolico and R.Giancarlo: 'The Boyer-Boore-Galil string searching
+    strategies revisited', SIAM J. Computing, February 1986
+[7] R.S.Boyer and J.S.Moore: 'A Fast string searching algorithm', Comm. ACM,
+    October 1977
+[8] R.N.Horspool: 'Practical fast searching in strings', Software - Practise
+    and Experience, June 1980
+[9] D.E.Knuth, J.H.Morris and V.R.Pratt: 'Fast pattern matching in strings',
+    SIAM J. Computing, June 1977
+
+Version history:
+---------------
+
+Changed to use new deterministic regular expression algorithm.
+    J.Ruuth 15-Mar-1988	(v.1.10)
+
+More options.
+    J.Ruuth 25-Mar-1988	(v.1.11)
+ 
+Changed to dynamically use maximum I/O buffer size that does not cause
+pointer wraparound with boyer-moore algorithm. It is meaningful only
+under 80(1?8[68]|286)|V[234]0 processors and 80[34]86 under 16-bit OS
+(OS/2|MS-DOS). Implemented for Turbo C and MSC 5.1 and Quick C 1.01.
+For 32-bit environments you can adjust I/O buffer size by simply
+changing the constant MAXBUF in file system.h and recompiling.
+    P.Soini 03-Apr-1988	(v.1.20)
+
+O(n+m)-time regular expression searcher (old was O(nm)-time) and  some
+changes from GNU grep.
+    J.Ruuth 21-Nov-1988	(v.1.30)
+
+Guaranteed worst case performance reduced to O(m+n)-time after 
+modifications to the boyer-moore algorithm supplied by Petri Soini.
+    J.Ruuth 06-Dec-1988	(v.1.40)
+
+Added touch-option.
+    J.Ruuth 17-Jan-1989	(v.1.44)
+
+Added options to print leading and trailing context of the match. I
+tought it was quite a unique idea, but GNU grep already does it,  so
+option craracters are borrowed from it.
+    J.Ruuth 17-Mar-1989	(v.1.50)
+
+Fixed a bug in read_exp().
+    J.Ruuth 08-Jun-1989
+
+Fixed a bug when buffer didn't end with an end of line character, and
+changed interface slightly to the reg_comp.
+    J.Ruuth 17-Aug-1989	(v.1.60)
+
+Changed usage to display different things at different situations.
+    J.Ruuth 12-Sep-1989	(v.1.61)
+
+Fixes for BSD's tolower() and toupper() odd behaviour.
+    J.Ruuth 21-Oct-1989	(v.1.62)
+
+Added possibility to make faster reg_exec using more memory.
+    J.Ruuth 14-Jan-1990 (v.1.70)
+
+Added input buffer alignment to physical disk blocks.
+    J.Ruuth 16-Mar-1990 (v.1.71)
+
+Removed fputs and system specific output and started to use printf.
+Code is now more readable.
+    J.Ruuth 03-Jul-1990 (v.1.72)
+
+End of line character handling changed. Now it is possible to use MS-DOS
+version of dgrep also to the files that are in the Unix format (both
+CR-LF combination and single LF are recognized as end of line mark).
+Also new verbose option (-z).
+	J.Ruuth 11-Nov-1990
+
+Ported to QNX.
+	P.Soini 04-Dec-1990 (v.1.73)
+
+Fixed a bug that did't display previous line when option -B or
+-<number> was used.
+	J.Ruuth 11-Jun-1996 (v.1.74)
+

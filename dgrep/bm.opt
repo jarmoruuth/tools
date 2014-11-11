@@ -1,0 +1,17 @@
+; Hand optimized version of boyer-moore inner loop for Turbo C
+; This speeds up the bm search about 10%
+
+;	?debug	L 199
+	mov	di,word ptr [bp+6]
+	jmp	short @69
+;;;;;;;;;;;;;;;;;;;; INNER LOOP BEGIN		;clocks in 80(1?|2)86
+@68:
+	mov	bl,byte ptr [si]		;8+5=13
+	sub	bh,bh				;3
+	shl	bx,1				;2
+	add	si,word ptr DGROUP:_delta0[bx]	;9+9=18
+@69:
+	cmp	si,di				;3
+	jbe	@68				;16
+;;;;;;;;;;;;;;;;;;;; INNER LOOP END		;--- 55 clocks, 6 instr.
+;	?debug	L 215

@@ -1,0 +1,13 @@
+
+	Some statistics
+	---------------
+
+reg_exec timing:
+	flags:	-s
+	exp:	"Ruuth|Soini"
+	input:	32700+ lines of C (*.c 9 times in dgrep directory)
+
+	Inner loop     30.00 sec, 779 229 times
+	Outer loop      7.09 sec,  32 837 times
+	Get transition  0.05 sec,      25 times
+	Total time     48.79 sec,     243 times (includes loop timers)
