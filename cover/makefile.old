@@ -1,0 +1,73 @@
+# Makefile for OS/2 and Microsoft C
+
+MDL	= S
+CC	= cl
+CFLAGS	= -W3 -FPa -Gs -Zp
+LINK    = link
+LFLAGS	= /NOE /STA:4096
+ARGV	= $(LIB)\setargv.obj
+#ARGV	= d:\cc\lib\setargv.obj
+YACC	= bison
+YFLAGS	= -d
+LEX     = flex
+COVERDEF=cover.def
+
+.c.obj:
+	$(CC) -c -A$(MDL) $(CFLAGS) $<
+
+default: covpp.exe covstat.exe covcount.exe covsort.exe covcl.exe covini.obj\
+         covbcc.exe
+
+y: cover_ta.c
+
+COVEROBJ = covpp.obj cover_ta.obj lexyy.obj
+
+covpp.exe: $(COVEROBJ)
+	$(LINK) $(LFLAGS) $(COVEROBJ),,,,$(COVERDEF)
+
+covstat.exe: covstat.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),,,,$(COVERDEF)
+
+covcount.exe: covcount.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),,,,$(COVERDEF)
+
+covsort.exe: covsort.obj
+	$(LINK) /NOE /STA:10000 $* $(ARGV),,,,$(COVERDEF)
+
+covsort.obj: covsort.c
+	$(CC) -c -AL $(CFLAGS) $*.c
+
+covzero.exe: covzero.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),,,,$(COVERDEF)
+
+covcl.exe: covcl.obj
+	$(LINK) $*,,,,$(COVERDEF)
+
+covbcc.exe: covbcc.obj
+	$(LINK) $*,,,,$(COVERDEF)
+
+covini.obj: covini.c
+	$(CC) -c -DVIA -DALPHA -Alfw $(CFLAGS) $*.c
+
+lexyy.obj: lexyy.c
+	$(CC) -c $(CFLAGS) $*.c
+
+lexyy.c: cover.l
+        $(LEX) cover.l
+
+cover_ta.obj: cover_ta.c
+	$(CC) -c $(CFLAGS) $*.c
+
+cover_ta.c: cover.y
+	$(YACC) $(YFLAGS) cover.y
+
+# Test
+
+test.exe: test.obj covinis.obj
+        link test.obj covinis.obj;
+
+test.obj: test.c
+        covcl -c -W3 test.c
+
+covinis.obj: covini.c
+	cl -c -W3 -Focovinis.obj covini.c

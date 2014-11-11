@@ -1,0 +1,5 @@
+; Cover definition file for OS/2. This allows the program run also
+; in Presentation Manager text window.
+
+NAME WINDOWCOMPAT
+

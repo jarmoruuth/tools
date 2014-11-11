@@ -1,0 +1,48 @@
+# Makefile for MS-DOS and Turbo C
+
+CC	= tcc
+MDL	= s
+CFLAGS	= -m$(MDL) -w -d -Z -O -G
+LFLAGS	= -m$(MDL)
+ARGV	= \usr\lib\$(MDL)setargv.obj
+YACC	= bison
+YFLAGS	= -d
+LEX     = flex
+
+.c.obj:
+	$(CC) -c $(CFLAGS) $<
+
+default: covpp.exe covstat.exe covcl.exe covini.obj
+
+y: cover_ta.c
+
+COVEROBJ = covpp.obj cover_ta.obj lexyy.obj
+
+covpp.exe: $(COVEROBJ)
+	$(CC) $(LFLAGS) $(COVEROBJ)
+
+covstat.exe: covstat.obj
+	$(CC) $(LFLAGS) covstat.obj $(ARGV)
+
+covcl.exe: covcl.obj
+	$(LINK) $*,,,,$(COVERDEF)
+
+lexyy.obj: lexyy.c
+	$(CC) -c $(CFLAGS) -w-rch $*.c
+
+cover_ta.obj: cover_ta.c
+	$(CC) -c $(CFLAGS) -w-cln $*.c
+
+cover_ta.c: cover.y
+	$(YACC) $(YFLAGS) cover.y
+
+# Test
+
+test.exe: test.obj covinis.obj
+        link test.obj covinis.obj;
+
+test.obj: test.c
+        covcl -c -W3 test.c
+
+covinis.obj: covini.c
+	cl -c -W3 -Focovinis.obj covini.c

@@ -1,0 +1,112 @@
+# Makefile for NT and Microsoft C
+
+NT=Y
+
+ifdef NT
+CC	= cl
+CFLAGS	= -Gs -W3 -DWIN32 -D_WIN32 -DNT
+LINK    = gmakelink link32 -SUBSYSTEM:CONSOLE
+ARGV	= setargv.obj 
+else
+MDL	= L
+CC	= cl
+CFLAGS	= -W3 -Gs -Zp -Iu:\bin\os2_16\msc60\include -A$(MDL)
+LINK    = link
+LFLAGS	= /NOE /STA:8192
+LIB     =
+SYSLIBS = $(LIB_MSC60)\ llibce.lib os2.lib 
+ARGV	= $(LIB_MSC60)\setargv.obj #$(LIB)\setargv.obj
+#ARGV	= d:\cc\lib\setargv.obj
+COVERDEF=cover.def
+endif
+
+YACC	= bison
+YFLAGS	= -d
+LEX     = flex
+
+.c.obj:
+	$(CC) -c $(CFLAGS) $<
+
+ifdef NT
+default: covpp.exe covstat.exe covcount.exe covsort.exe covlist.exe covcl.exe
+else
+default: covpp.exe covstat.exe covcount.exe covsort.exe covcl.exe \
+         covbcc.exe covwcc.exe covicc.exe covlist.exe 
+endif
+
+y: cover_ta.c
+
+COVEROBJ = cover_ta.obj lexyy.obj covpp.obj
+SETDBGOBJ = setdbg.obj cover_ta.obj lexyy.obj
+
+cp4.exe: cp4.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+wcc4.exe: wcc4.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+covpp.exe: $(COVEROBJ)
+	$(LINK) $(LFLAGS) $(COVEROBJ),$*,,$(SYSLIBS),$(COVERDEF)
+
+setdbg.exe: $(SETDBGOBJ)
+	$(LINK) $(LFLAGS) $(SETDBGOBJ),$*,,$(SYSLIBS),$(COVERDEF)
+
+covstat.exe: covstat.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+covlist.exe: covlist.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+covcount.exe: covcount.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+covsort.exe: covsort.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+covsort.obj: covsort.c
+	$(CC) -c -AL $(CFLAGS) $*.c
+
+covzero.exe: covzero.obj
+	$(LINK) $(LFLAGS) $* $(ARGV),$*,,$(SYSLIBS),$(COVERDEF)
+
+covcl.exe: covcl.obj
+	$(LINK) $(LFLAGS) $*,$*,,$(SYSLIBS),$(COVERDEF)
+
+covwcc.exe: covwcc.obj
+	$(LINK) $(LFLAGS) $*,$*,,$(SYSLIBS),$(COVERDEF)
+
+covicc.exe: covicc.obj
+	$(LINK) $(LFLAGS) $*,$*,,$(SYSLIBS),$(COVERDEF)
+
+covbcc.exe: covbcc.obj
+	$(LINK) $(LFLAGS) $*,$*,,$(SYSLIBS),$(COVERDEF)
+
+covini.obj: covini.c
+	$(CC) -c -DVIA -DALPHA -Alfw $(CFLAGS) $*.c
+
+lexyy.obj: lexyy.c
+	$(CC) -c -Od $(CFLAGS) $*.c
+
+lexyy.c: cover.l
+        $(LEX) -L cover.l
+
+cover_ta.obj: cover_ta.c
+	$(CC) -c $(CFLAGS) $*.c
+
+cover_ta.c: cover.y
+	$(YACC) $(YFLAGS) cover.y
+
+
+# Test
+
+test.exe: test.obj covinis.obj
+        link test.obj covinis.obj;
+
+test.obj: test.c
+        covcl -Ck -c -W3 test.c
+
+covinis.obj: covini.c
+	cl -c -W3 -Focovinis.obj covini.c
+
+testfl: test.c
+        covcl -Cf -c -W3 test.c
