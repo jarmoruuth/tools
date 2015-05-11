@@ -7,10 +7,10 @@
 dgrep:	dgrep.exe
 try:	try.exe
 
-WILDARG	= "C:\Program Files (x86)\Microsoft Visual Studio 9.0\VC\lib\setargv.obj"
+WILDARG	= "C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\lib\amd64\setargv.obj"
 
 CC	= cl
-CFLAGS	= -Ox -GL -G7 -J -c -DECTYPE -W3 -DNT -DMSC -D_WIN32 -DWIN32 -I..\lib
+CFLAGS	= -Ox -GL -c -DECTYPE -W3 -DNT -DMSC -I..\lib
 
 LINK	= cl
 LIBS	= -link ..\lib\cwnt.lib
@@ -28,12 +28,16 @@ try.exe: $(TRYOBJ)
 	$(LINK) $(LFLAGS) $(TRYOBJ) $(LIBS)
 
 .c.obj:
-	$(CC) $(CFLAGS) $<
+	$(CC) $(CFLAGS) $*.c
 
 dfa.h:		set.h
 
 dgrep.obj:	dgrep.c dfaregex.h dfa.h system.h
+	$(CC) $(CFLAGS) dgrep.c
+	
 bm.obj:		bm.c dfa.h system.h
+	$(CC) $(CFLAGS) $*.c
+	
 dfaregex.obj:	dfaregex.c dfaregex.h dfa.h system.h
 dfa.obj:	dfa.c dfa.h system.h
 calcpos.obj:	calcpos.c dfa.h system.h

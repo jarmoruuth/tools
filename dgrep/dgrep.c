@@ -632,7 +632,7 @@ static void dgrep_file(REG1 char* src)
 		dgrep(h);
 		close(h);
 	} else {
-		fprintf(stderr, "Warning: Can't open file %s\n", src);
+		/* fprintf(stderr, "Warning: Can't open file %s\n", src); */
 		file_not_found = TRUE;
 	}
 }
