@@ -46,6 +46,7 @@ static char		silent		= FALSE;
 static char		no_boymoore	= FALSE;
 static char		touch		= FALSE;
 static char		block_mode	= FALSE;
+static char     path_mode   = FALSE;
 static char		verbose		= FALSE;
 static int		leading_context	= 0;
 static int		trailing_context= 0;
@@ -65,6 +66,7 @@ static char		first_match	= TRUE;
 static char*		path		= "";	/* current path and filename */
 static char*		expr		= NULL;
 static char*		regmust	= NULL;
+static char     fullpath[2048];
 static int		regmustlen;
 static char		use_normal;
 
@@ -124,6 +126,7 @@ static char* options1 = {
       "\t -i   case insensitive match\n"
       "\t -l   only names of files with matching lines are printed\n"
       "\t -n   each line is preceded by its relative line number in file\n"
+	  "\t -p   filename is printed with full path\n"
       "\t -s   silent mode, nothing is printed except error messages\n"
 };
 
@@ -627,7 +630,15 @@ static void dgrep_file(REG1 char* src)
 {
 	REG2 int h;	/* file handle */
 
-	path = src;	/* for filename display */
+	if (path_mode) {
+		int srclen = strlen(src);
+		getcwd(fullpath, sizeof(fullpath) - srclen - 2);
+		strcat(fullpath, "\\");
+		strcpy(fullpath + strlen(fullpath), src);
+		path = fullpath;
+	} else {
+		path = src;	/* for filename display */
+	}
 	if ((h=open(src,O_RDONLY|O_BINARY)) != ERROR) {
 		dgrep(h);
 		close(h);
@@ -674,7 +685,7 @@ static int get_args(REG1 int argc, char* argv[])
 	REG2 int	opt;
 
 	opterr = FALSE;	/* handle errors ourselves */
-	while ((opt = getopt(argc, argv, "bdchilnrstvxz123456789A:B:e:f:D")) != EOF) {
+	while ((opt = getopt(argc, argv, "bdchilnoprstvxz123456789A:B:e:f:D")) != EOF) {
 		switch (opt) {
 			case 'A':
 				trailing_context = (unsigned)atoi(optarg);
@@ -703,6 +714,9 @@ static int get_args(REG1 int argc, char* argv[])
 			case 'n':
 				number = TRUE;
 				linecount_ptr = &linecount;
+				break;
+			case 'p':
+				path_mode = TRUE;
 				break;
 			case 's':
 				silent = TRUE;
