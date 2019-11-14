@@ -151,11 +151,11 @@ static char* regexps = {
 "[...]"	"\tany character in set\t\t"	"\\c"	"\tquote special character c\n"
 "[^...]""\tany character not in set\t"	"|"	"\talternative (\"or\")\n"
 };
-
+#ifndef UNIX
 extern int	optind, opterr;
 extern char*	optarg;
 extern	int	getopt(int argc, char* argv[], char* optionS);
-
+#endif /* !UNIX */
 /**********************************************************************
  *
  *	short_usage

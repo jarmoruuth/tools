@@ -56,8 +56,13 @@ extern void* memchr(void* b, char ch, unsigned n);
 #else
 
 #include <string.h>
+#ifndef UNIX
 #include <process.h>
 #include <io.h>
+#else /* !UNIX */
+#include <unistd.h>
+#include <utime.h>
+#endif /* !UNIX */
 #include <stdlib.h>
 
 #endif	/* BSD */
@@ -179,10 +184,12 @@ typedef enum {
 } bool;
 
 #ifndef MSC
+#if 0
 extern void* malloc(unsigned nbytes);
 extern void* calloc(unsigned nelem, unsigned elsize);
 extern void* realloc(void* p, unsigned newsize);
 extern void  free(void* p);
+#endif /* 0 */ 
 #endif
 extern void  d_free(void* ptr);
 extern void  error(char* errmsg, int exit_value);

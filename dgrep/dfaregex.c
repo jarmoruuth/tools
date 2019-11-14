@@ -191,7 +191,7 @@ check_bol:
 			   same order as in the array of eol characters */
 			for (i++; i < rbuf.neol && *s == rbuf.eol[i]; i++, s++)
 				;
-			if (s > strend || cur_state == STOPSTATE)
+			if (s > (uchar*)strend || cur_state == STOPSTATE)
 				break;	/* return NULL */
 			if (rbuf.begline)
 				goto check_bol;

@@ -1,0 +1,41 @@
+######################################################################
+#
+#	Makefile for dgrep and test programs for BSD UNIX
+#	You propably need GNU make for this.
+#
+######################################################################
+
+CC	= gcc
+CFLAGS	= -O -DUNIX -funsigned-char -DFAST
+
+LINK	= gcc
+LFLAGS	= $(CFLAGS)
+LIBS	= 
+
+DFAOBJ	= dfaregex.o dfa.o calcpos.o dfatree.o regmust.o set.o clib.o
+	  
+DGREPOBJ = dgrep.o bm_d012.o $(DFAOBJ)
+
+dgrep: $(DGREPOBJ)
+	$(LINK) $(LFLAGS) -o dgrep $(DGREPOBJ)
+
+TRYOBJ = try.o $(DFAOBJ)
+
+try: $(TRYOBJ)
+	$(LINK) $(LFLAGS) -o try $(TRYOBJ)
+
+.c.o:
+	$(CC) -c $(CFLAGS) $<
+
+dfa.h:		set.h
+
+dgrep.o:	dgrep.c dfaregex.h dfa.h system.h
+bm.o:		bm.c dfa.h system.h
+dfaregex.o:	dfaregex.c dfaregex.h dfa.h system.h
+dfa.o:		dfa.c dfa.h system.h
+calcpos.o:	calcpos.c dfa.h system.h
+dfatree.o:	dfatree.c dfa.h system.h
+regmust.o:	regmust.c dfa.h system.h
+set.o:		set.c set.h system.h
+clib.o:		clib.c system.h
+try.o:		try.c dfaregex.h
