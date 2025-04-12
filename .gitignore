@@ -1,3 +1,6 @@
+.vscode
+.tmp.driveupload
+
 # Object files
 *.o
 *.ko
