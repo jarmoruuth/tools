@@ -8,6 +8,7 @@
  *	    1.10 14-Sep-1988	support for floats and user variables
  *	    1.20 20-Nov-1988	library functions and control variables
  *	    1.21 31-Jan-1989	fixed a bug handling float after dot
+ *	    2.00 12-Apr-2025	Support for 64 bit integers
  *
  * Author: Jarmo Ruuth
  *
@@ -15,20 +16,21 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h> // For int64_t
 #include <string.h>
 #include <dos.h>
-#include <ectype.h>
+#include <ctype.h>
 #include <math.h>
 #include <setjmp.h>
 #include <conio.h>
 #include <setjmp.h>
 
-#include <c.h>
+#include "../lib/c.h"
 
-static char	version[] = "version 1.21";
+static char	version[] = "version 2.00 (64-bit)";
 
-typedef double	calc_t;
-typedef long	int_t;
+typedef double	    calc_t;
+typedef int64_t	    int_t;
 
 #define	MAXBUF		255
 #define	MAXTOKEN	MAXBUF
@@ -129,6 +131,45 @@ static int		base = DEFAULT_BASE;
 static int		in_function;
 
 static calc_t expression(void);
+
+/**********************************************************************
+ *
+ *	lltoa - convert a long long integer to a string in a given base.
+ *
+ * Supports bases between 2 and 36.
+ **********************************************************************/
+static char *lltoa(int_t value, char *str, int base)
+{
+   char *p = str;
+   char *p1, *p2;
+   int negative = 0;
+   if (base < 2 || base > 36) {
+      *str = '\0';
+      return str;
+   }
+   if (value < 0) {
+      negative = 1;
+      value = -value;
+   }
+   /* convert number to string in reverse order */
+   do {
+      int remainder = (int)(value % base);
+      *p++ = (remainder < 10) ? '0' + remainder : 'A' + remainder - 10;
+      value /= base;
+   } while (value);
+   if (negative)
+      *p++ = '-';
+   *p = '\0';
+   /* reverse the string */
+   p1 = str;
+   p2 = p - 1;
+   while (p1 < p2) {
+      char tmp = *p1;
+      *p1++ = *p2;
+      *p2-- = tmp;
+   }
+   return str;
+}
 
 /**********************************************************************
  *
@@ -319,6 +360,9 @@ static calc_t digit_token(char *buf)
     register char	*buf_start = buf;
     register int	is_float = FALSE;
 
+    while (isspace(*buf_start)) {
+        buf_start++;
+    }
     get_int(&tokstr, &buf, is_float);
     if (*tokstr == '.') {
         is_float = TRUE;
@@ -328,18 +372,30 @@ static calc_t digit_token(char *buf)
     if (toupper(*tokstr) == 'E') {
         is_float = TRUE;
         *buf++ = *tokstr++;
-        if (*tokstr == '+' || *tokstr == '-')
+        if (*tokstr == '+' || *tokstr == '-') {
             *buf++ = *tokstr++;
+        }
         get_int(&tokstr, &buf, is_float);
     }
     *buf = '\0';
     if (is_float) {
-        if (sscanf (buf_start, "%lf", &calc_value) != 1)
+        if (sscanf (buf_start, "%lf", &calc_value) != 1) {
             eval_error("Invalid number constant '%s'", buf_start);
+        }
         return calc_value;
+    } else if (*buf_start == '-') {
+        // Read as signed number
+        int_value = strtoll(buf_start, NULL, 0);
+        if (debug) {
+            printf("buf = %s, int_value = %lld\n", buf_start, int_value);
+        }
+        return (calc_t)int_value;
     } else {
-        if (sscanf (buf_start, "%lI", &int_value) != 1)
-            eval_error("Invalid number constant '%s'", buf_start);
+        // Read as unsigned number
+        int_value = strtoull(buf_start, NULL, 0);
+        if (debug) {
+            printf("buf = %s, int_value = %llu\n", buf_start, int_value);
+        }
         return (calc_t)int_value;
     }
 }
@@ -665,7 +721,7 @@ static calc_t check_func (void)
             return (*func->fun)(arg[0]);
         case 2:
             if (debug)
-                printf("call %s(%.4lf, .4lf)\n", func->name,
+                printf("call %s(%.4lf, %.4lf)\n", func->name,
                     arg[0], arg[1]);
             return (*func->fun)(arg[0], arg[1]);
         default:
@@ -998,13 +1054,13 @@ static calc_t assignment_exp(void)
             break;
         case MUL_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value *= assignment_exp();
             break;
         case DIV_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             if ((i = assignment_exp()) == 0)
                 eval_error("Division by zero", NULL);
@@ -1012,7 +1068,7 @@ static calc_t assignment_exp(void)
             break;
         case REM_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             if ((i = assignment_exp()) == 0)
                 eval_error("Division by zero", NULL);
@@ -1021,47 +1077,47 @@ static calc_t assignment_exp(void)
             break;
         case ADD_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value += assignment_exp();
             break;
         case SUB_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value -= assignment_exp();
             break;
         case SHL_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value =
             (calc_t)(to_int_t(var->value) << to_int_t(assignment_exp()));
             break;
         case SHR_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value =
             (calc_t)(to_int_t(var->value) >> to_int_t(assignment_exp()));
             break;
         case AND_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value =
             (calc_t)(to_int_t(var->value) & to_int_t(assignment_exp()));
             break;
         case XOR_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value =
             (calc_t)(to_int_t(var->value) ^ to_int_t(assignment_exp()));
             break;
         case OR_ASS:
             if (var == NULL)
-                eval_error("Unbound varible '%s'", current);
+                eval_error("Unbound variable '%s'", current);
             fetch_new();
             var->value =
             (calc_t)(to_int_t(var->value) | to_int_t(expression()));
@@ -1142,13 +1198,13 @@ static char *getline(void)
     printf("\n");
     return b;
 #else
-        static char b[255];
+        static char buffer[512];
 
-        if (gets(b) == NULL) {
+        if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
             exit(1);
         }
 
-        return(b);
+        return(buffer);
 #endif
 }
 
@@ -1180,14 +1236,16 @@ static void show_value (calc_t value, int table_format)
         var->value = (calc_t)DEFAULT_BASE;
     }
     int_value = to_int_t(value);
-    if (table_format)
-        printf("%12.*lf %8ld 0x%08lX 0%012lo %s\n",
+    // 18446744073709551615 = 20 digits
+    if (table_format) {
+        printf("%12.*lf %8lld 0x%08llX 0%012llo %s\n",
             digits, value, int_value, int_value,
-            int_value, ltoa(int_value, buffer, base));
-    else
-        printf("%01.*lf %01ld 0x%01lX 0%01lo %s\n",
-            digits, value, int_value, int_value,
-            int_value, ltoa(int_value, buffer, base));
+            int_value, lltoa(int_value, buffer, base));
+    } else {
+        printf("%.*lf %lld %llu  0x%llX 0%llo %s\n",
+            digits, value, int_value, int_value, int_value,
+            int_value, lltoa(int_value, buffer, base));
+    }
 }
 
 /**********************************************************************
@@ -1216,6 +1274,13 @@ static void init (void)
     add_var(BASE_NAME,	(calc_t)DEFAULT_BASE);
     add_var("TRUE",		1.0);
     add_var("FALSE",	0.0);
+    // Add 32 and 54 bit max int values
+    add_var("INT32_MAX",	(calc_t)INT32_MAX);
+    add_var("INT32_MIN",	(calc_t)INT32_MIN);
+    add_var("INT64_MAX",	(calc_t)INT64_MAX);
+    add_var("INT64_MIN",	(calc_t)INT64_MIN);
+    add_var("UINT32_MAX",	(calc_t)UINT32_MAX);
+    add_var("UINT64_MAX",	(calc_t)UINT64_MAX);
     /* sort functions */
     qsort(funcs, NFUNC, sizeof(FUNC), func_sort_cmp);
 }
@@ -1228,7 +1293,7 @@ static int more (char *str)
 {
     register int	key;
 
-    printf(str);
+    printf("%s", str);
     printf(" --More--");
     key = getch();
     printf("\n");
@@ -1335,22 +1400,16 @@ void main (int argc, char *argv[])
     calc_t		result;
     register char	*buf;
     int		opt;
-    extern int	optind, opterr;
-    extern int	getopt(int, char **, char *);
 
     init();
-    opterr = FALSE;	/* handle errors ourselves */
-    while ((opt = getopt(argc, argv, "d")) != EOF) {
-        switch (opt) {
-            case 'd':
-                debug = TRUE;
-                break;
-            default:
-                give_help();
-                break;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-d") == 0) {
+             debug = TRUE;
+        } else {
+            give_help();
         }
-    }
-    printf ("CALC - interactive expression evaluator, %s.\n"
+   }
+   printf ("CALC - interactive expression evaluator, %s.\n"
         "Enter expression. Press ^C to quit, ? for help.\n", version);
     for (;;) {	/* error loop */
         if (setjmp(calc_error) != 0) {
