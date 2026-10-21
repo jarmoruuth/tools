@@ -830,11 +830,12 @@ int main(int argc, char* argv[])
 	if (!expr)
 		expr = argv[optind++];
 	len = strlen(expr);
-	if (exact && (no_boymoore || len > MAXREGMUST)) {
+	if (exact && (no_boymoore || len > MAXREGMUST || len == 0)) {
 		/* Bm can handle only MAXREGMUST long patterns with
 		   N+M worst case. So we verify match with reg_exec,
 		   which does it in N+M time. (We use bm with the
-		   regmust pattern from reg_comp.) */
+		   regmust pattern from reg_comp.) Bm can't search
+		   an empty pattern. */
 		expr = quote_expr(expr, len);
 		exact = FALSE;
 	}
