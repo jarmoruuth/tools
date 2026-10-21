@@ -762,29 +762,65 @@ static int get_args(REG1 int argc, char* argv[])
 
 /**********************************************************************
  *
+ *	add_env_args
+ *
+ * Inserts the white space separated options from env after argv[0].
+ * Returns the new argv and updates argc.
+ */
+static char** add_env_args(char* env, int* argc, char* argv[])
+{
+	char**	newargv;
+	char*	s;
+	int	nenv = 0;
+	int	i;
+
+	if ((s = malloc(strlen(env) + 1)) == NULL)
+		error("Out of memory", 3);
+	env = strcpy(s, env);
+	for (s = env; *s; ) {
+		while (*s == ' ' || *s == '\t')
+			s++;
+		if (*s == '\0')
+			break;
+		nenv++;
+		while (*s && *s != ' ' && *s != '\t')
+			s++;
+	}
+	newargv = malloc(sizeof(argv[0]) * (*argc + nenv + 1));
+	if (newargv == NULL)
+		error("Out of memory", 3);
+	newargv[0] = argv[0];
+	for (i = 1, s = env; i <= nenv; i++) {
+		while (*s == ' ' || *s == '\t')
+			s++;
+		newargv[i] = s;
+		while (*s && *s != ' ' && *s != '\t')
+			s++;
+		if (*s)
+			*s++ = '\0';
+	}
+	memcpy(&newargv[nenv + 1], &argv[1], sizeof(argv[0]) * *argc);
+	*argc += nenv;
+	return newargv;
+}
+
+/**********************************************************************
+ *
  *	main
  */
-int main(REG1 int argc, char* argv[])
+int main(int argc, char* argv[])
 {
 	REG2 int	optind;
 	REG3 char*	s;
 	REG4 int	len;
 	int		nfile;
-	char**		envargs;
 
 	if (argc == 1)
 		short_usage();
 	alloc_buffer();	/* Allocate I/O buffer */
 	s = getenv("DGREP");
-	if (s != NULL) {
-		envargs = malloc(sizeof(argv[0]) * (argc + 2));
-		if (envargs == NULL)
-			error("Out of memory", 2);
-		envargs[0] = argv[0];
-		envargs[1] = s;
-		memcpy(&envargs[2], &argv[1], sizeof(argv[0]) * argc);
-		argv = envargs;
-	}
+	if (s != NULL)
+		argv = add_env_args(s, &argc, argv);
 	optind = get_args(argc, argv);
 	if (optind >= argc && !expr)
 		short_usage();
