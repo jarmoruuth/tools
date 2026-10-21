@@ -274,7 +274,7 @@ static void print_line(char* beg, REG1 char* end, ulong lineno)
 	c = *end;
 	*end = '\0';
 	if (show_fname == BEFORE_LINE)
-		printf(path);
+		fputs(path, stdout);
 	else if (show_fname == BLOCK && !fname_shown) {
 		printf("*** File %s:\n", path);
 		fname_shown = TRUE;
@@ -604,7 +604,7 @@ static void dgrep(int h)
 	}
 	if (!silent && count && !names) {
 		if (show_fname != NONE)
-			printf(path);
+			fputs(path, stdout);
 		show_number(matchcount);
 		printf("\n");
 	}
