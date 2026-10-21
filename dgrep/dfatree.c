@@ -77,11 +77,7 @@ static int expression (void);
  *
  *	CLEAR_LANGUAGE
  */
-#ifdef BSD
-#define CLEAR_LANGUAGE(l)	bzero(l, NLANG)
-#else
 #define CLEAR_LANGUAGE(l)	memset(l, FALSE, NLANG)
-#endif
 
 /**********************************************************************
  *
@@ -124,7 +120,7 @@ static int new_pos(void)
 static void add_language(int ch)
 {
 	language[ch] = TRUE;
-	if (rbuf.ignorecase && isalpha(ch))
+	if (rbuf.ignorecase && IS_ALPHA(ch))
 		language[CHCASE(ch)] = TRUE;
 }
 
@@ -211,8 +207,8 @@ static void add_regexp(int item)
 			memerr = TRUE;
 	}
 	++regpos;
-	if  (!(item & ~MAXCHAR) && rbuf.ignorecase && islower(item))
-		regexp[regpos] = toupper(item);
+	if  (!(item & ~MAXCHAR) && rbuf.ignorecase && IS_LOWER(item))
+		regexp[regpos] = TO_UPPER(item);
 	else
 		regexp[regpos] = item;
 }
@@ -413,7 +409,7 @@ static uchar* get_class(REG3 uchar* str)
 	}
 	if (rbuf.ignorecase) {
 		for (i = 1; i < NCHARS; i++)
-			if (isalpha(i))
+			if (IS_ALPHA(i))
 				class[i] |= class[CHCASE(i)];
 	}
 	if (neg)
@@ -762,11 +758,7 @@ static bool convert_language(void)
 	
 #ifdef TEST
 
-#if defined(__TURBOC__) || defined(MSDOS)
-#define EMPTYCH	0xee
-#else
 #define EMPTYCH	'@'
-#endif
 
 extern int debug;
 

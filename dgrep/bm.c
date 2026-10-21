@@ -95,7 +95,7 @@ static void	make_ccase(int iflag)
 	
 	if (iflag) {
 		while (i--)
-			ccase[i] = islower(i) ? CHCASE(i) : i;
+			ccase[i] = IS_LOWER(i) ? CHCASE(i) : i;
 	} else {
 		while (i--)
 			ccase[i] = i;
@@ -194,7 +194,7 @@ char* boyer_moore(char* str, char* strend, char* pat, int patlen)
 	uchar*	str_plus_large = (uchar*)str + large;
 	uchar*	patend = (uchar*)pat + patlen - 1;
 	
-	if (patlen == 1 && (!isalpha(*pat) || ccase['a'] != ccase['A']))
+	if (patlen == 1 && (!IS_ALPHA(*pat) || ccase['a'] != ccase['A']))
 		return memchr(str, *pat, strend-str+1);
 	for (k = (uchar*)str + patlen - 1; ; ) {
 		p = (uchar*)strend;

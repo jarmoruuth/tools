@@ -75,8 +75,8 @@ static void make_ccase (int iflag)
 	REG1 int	i = NCHARS;
 	
 	while (i--) {
-		if (iflag && islower(i))
-			ccase[i] = toupper(i);
+		if (iflag && IS_LOWER(i))
+			ccase[i] = TO_UPPER(i);
 		else
 			ccase[i] = i;
 	}

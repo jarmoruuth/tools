@@ -1,0 +1,5 @@
+# Build outputs (object files and *.exe are ignored by the top level .gitignore)
+dgrep
+try
+dgrep-smallbuf
+smallbuf/

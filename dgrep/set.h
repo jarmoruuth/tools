@@ -28,14 +28,14 @@ typedef unsigned	set_t;
  *	in_set
  */
 #define in_set(set, pos) \
-	(((set)[(unsigned)(pos)/SETBITS])&(1<<((unsigned)(pos)%SETBITS)))
+	(((set)[(unsigned)(pos)/SETBITS])&(1u<<((unsigned)(pos)%SETBITS)))
 
 /**********************************************************************
  *
  *	add_set
  */
 #define add_set(set, pos) \
-	(((set)[(unsigned)(pos)/SETBITS])|=(1<<((unsigned)(pos)%SETBITS)))
+	(((set)[(unsigned)(pos)/SETBITS])|=(1u<<((unsigned)(pos)%SETBITS)))
 
 /**********************************************************************
  *
@@ -57,11 +57,7 @@ typedef unsigned	set_t;
  *
  * Clears set.
  */
-#ifdef BSD
-#define set_clear(set, setsize) bzero(set, setsize)
-#else
 #define set_clear(set, setsize) memset(set, 0, setsize)
-#endif
 
 extern bool set_empty(set_t* set, int setsize);
 extern void set_union(set_t* result, set_t* set1, set_t* set2, int setsize);

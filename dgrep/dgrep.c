@@ -11,11 +11,11 @@
  * May be freely copied for any non-commercial usage.
 \**********************************************************************/
 
-#include <fcntl.h>
 #include "system.h"
 #include "dfa.h"
 #include "dfaregex.h"
 #include "bm.h"
+#include "getopt.h"
 
 #define VERSION		"1.75"
 
@@ -132,9 +132,7 @@ static char* options1 = {
 
 /* split options for MSC 5.X */
 static char* options2 = {
-#ifdef TOUCH
       "\t -t   all files that contain matches are touched\n"
-#endif
       "\t -v   all lines but those matching are printed\n"
       "\t -x   exact, all characters in expression are taken literally\n"
       "\t -z   verbose\n"
@@ -151,11 +149,7 @@ static char* regexps = {
 "[...]"	"\tany character in set\t\t"	"\\c"	"\tquote special character c\n"
 "[^...]""\tany character not in set\t"	"|"	"\talternative (\"or\")\n"
 };
-#ifndef UNIX
-extern int	optind, opterr;
-extern char*	optarg;
-extern	int	getopt(int argc, char* argv[], char* optionS);
-#endif /* !UNIX */
+
 /**********************************************************************
  *
  *	short_usage
@@ -219,16 +213,16 @@ static void str_toupper(REG1 uchar* s)
 	REG2 unsigned ch;
 	
 	for (; (ch = *s) != 0; s++) {
-		if (islower(ch))
-			*s = toupper(ch);
+		if (IS_LOWER(ch))
+			*s = TO_UPPER(ch);
 	}
 }
 
 /**********************************************************************
  *
- *	memrchr
+ *	d_memrchr
  */
-static char* memrchr(REG1 char* b, REG3 char c, REG2 unsigned n)
+static char* d_memrchr(REG1 char* b, REG3 char c, REG2 unsigned n)
 {
 	for (; n--; b--) {
 		if (*b == c)
@@ -246,14 +240,13 @@ static void show_number(ulong number)
 	printf("%s%lu", show_fname == BEFORE_LINE ? ":" : "", number);
 }
 
-#ifdef TOUCH
 /**********************************************************************
  *
  *	touch_file
  */
 static void touch_file(char* fname)
 {
-	static utime_t	touch_time;
+	static struct utimbuf	touch_time;
 	static int	first_time = TRUE;
 	
 	if (first_time) {
@@ -265,7 +258,6 @@ static void touch_file(char* fname)
 		touch_failed = TRUE;
 	}
 }
-#endif	/* TOUCH */
 
 /**********************************************************************
  *
@@ -371,10 +363,8 @@ static void print_leading_context(char* bufbeg, char* bufend)
 static status_t check_flags(char* beg, char* end, char* bufend)
 {
 	was_match = TRUE;
-#ifdef TOUCH
 	if (touch)
 		touch_file(path);
-#endif
 	if (names) {
 		if (!silent)
 			printf("%s\n", path);
@@ -410,7 +400,7 @@ static char* get_linebeg(char* s, char* bufbeg)
 		return bufbeg;
 	if (s[0] == EOL2)
 		s--;
-	s = memrchr(s, EOL2, s - bufbeg + 1);
+	s = d_memrchr(s, EOL2, s - bufbeg + 1);
 	if (s == NULL)
 		return bufbeg;
 	return s+1;
@@ -493,7 +483,7 @@ static int dgrep_buffer(char* buf, int bufsize)
 	char*	bufend;
 	
 	/* bufend is last EOL character in buffer */
-	if ((bufend=memrchr(buf+bufsize-1, EOL2, bufsize)) == NULL) {
+	if ((bufend=d_memrchr(buf+bufsize-1, EOL2, bufsize)) == NULL) {
 		return bufsize;
 	}
 	if (waiting_lines) {
@@ -684,14 +674,14 @@ static int get_args(REG1 int argc, char* argv[])
 {
 	REG2 int	opt;
 
-	opterr = FALSE;	/* handle errors ourselves */
-	while ((opt = getopt(argc, argv, "bdchilnoprstvxz123456789A:B:e:f:D")) != EOF) {
+	d_opterr = FALSE;	/* handle errors ourselves */
+	while ((opt = d_getopt(argc, argv, "bdchilnoprstvxz123456789A:B:e:f:D")) != EOF) {
 		switch (opt) {
 			case 'A':
-				trailing_context = (unsigned)atoi(optarg);
+				trailing_context = (unsigned)atoi(d_optarg);
 				break;
 			case 'B':
-				leading_context = (unsigned)atoi(optarg);
+				leading_context = (unsigned)atoi(d_optarg);
 				break;
 			case 'b':
 				block_mode = TRUE;
@@ -735,10 +725,10 @@ static int get_args(REG1 int argc, char* argv[])
 				block_mode = TRUE;
 				break;
 			case 'e':
-				expr = optarg;
+				expr = d_optarg;
 				break;
 			case 'f':
-				expr = read_exp(optarg);
+				expr = read_exp(d_optarg);
 				break;
 			case '1':
 			case '2':
@@ -767,7 +757,7 @@ static int get_args(REG1 int argc, char* argv[])
 		block_mode = FALSE;
 		verbose = FALSE;
 	}
-	return optind;
+	return d_optind;
 }
 
 /**********************************************************************
@@ -781,10 +771,7 @@ int main(REG1 int argc, char* argv[])
 	REG4 int	len;
 	int		nfile;
 	char**		envargs;
-	
-#ifdef PROFILE
-	prof_start(argv[0]);
-#endif
+
 	if (argc == 1)
 		short_usage();
 	alloc_buffer();	/* Allocate I/O buffer */
@@ -803,13 +790,6 @@ int main(REG1 int argc, char* argv[])
 		short_usage();
 	if (!expr)
 		expr = argv[optind++];
-#ifdef BSD
-	/* It is faster to count lines with dfa in Bsd. (Bsd doesn't
-	   have system memchr, and my version is too slow?) In PC
-	   current method is faster. I don't know about other systems. */
-	if (number)
-		no_boymoore = TRUE;
-#endif
 	len = strlen(expr);
 	if (exact && (no_boymoore || len > MAXREGMUST)) {
 		/* Bm can handle only MAXREGMUST long patterns with

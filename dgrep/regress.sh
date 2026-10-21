@@ -11,13 +11,16 @@
 #	dgrep		dgrep binary to test (default ./dgrep)
 #	try		regex test driver; if given, runs the tests,
 #			tests.s and tests.i tables like tryall.sh
-#	dgrep-smallbuf	dgrep built with a tiny I/O buffer (-DMAXBUF=64);
+#	dgrep-smallbuf	dgrep built with a tiny I/O buffer (-DMAXBUF=256);
 #			if given, its output is compared to dgrep's to
 #			test the buffer boundary handling
 #
 # Exit status is the number of failed tests.
 #
 ######################################################################
+
+# use the standard tools, not other versions earlier in PATH
+PATH=/usr/bin:/bin:$PATH
 
 abspath() {
 	case "$1" in
@@ -67,7 +70,7 @@ fail() {
 #	output (stdout and stderr, CRs removed) to expected.
 t() {
 	local actual
-	actual=$(eval "$3" 2>&1 | tr -d '\r')
+	actual=$(eval "$3" 2>&1 < /dev/null | tr -d '\r')
 	if [ "$actual" == "$2" ]; then
 		pass
 	else
@@ -80,7 +83,7 @@ t() {
 #	Runs command with eval and compares its exit status.
 s() {
 	local status
-	eval "$3" >/dev/null 2>&1
+	eval "$3" >/dev/null 2>&1 < /dev/null
 	status=$?
 	if [ "$status" == "$2" ]; then
 		pass
@@ -206,13 +209,13 @@ if [ -n "$SMALL" ]; then
 	for opts in "" "-n" "-i" "-v" "-c" "-l" "-n -i" "-1" "-A2" "-B3" \
 		    "-n -2" "-n -B2" "-n -v -A1" "-i -B1" "-d -n" "-x"; do
 		for pat in "match" "m.tch|other" "^line 1[0-9]" "newline$"; do
-			exp=$("$D" $opts "$pat" big.txt 2>&1 | tr -d '\r')
-			act=$("$SMALL" $opts "$pat" big.txt 2>&1 | tr -d '\r')
-			if [ "$exp" == "$act" ]; then
+			"$D" $opts "$pat" big.txt 2>&1 | tr -d '\r' > exp.out
+			"$SMALL" $opts "$pat" big.txt 2>&1 | tr -d '\r' > act.out
+			if cmp -s exp.out act.out; then
 				pass
 			else
 				fail "small buffer: dgrep $opts '$pat' big.txt" \
-					"$(diff <(echo "$exp") <(echo "$act") | head -6 | tr '\n' '|')"
+					"$(diff exp.out act.out | head -6 | tr '\n' '|')"
 			fi
 		done
 	done

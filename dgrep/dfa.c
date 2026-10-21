@@ -90,8 +90,8 @@ static tran_t build_state(set_t* state_set, unsigned inp, state_t* state)
 	REG3 node_t*	tptr;
 	REG4 int	type;
 	
-	if (rbuf.ignorecase && islower(inp))
-		inp = toupper(inp);
+	if (rbuf.ignorecase && IS_LOWER(inp))
+		inp = TO_UPPER(inp);
 	set_clear(state_set, rbuf.setsize);
 	/* build union of followpositions */
 	for (i = rbuf.root; i >= 0; i--) {
@@ -172,7 +172,7 @@ static tran_t add_transition(REG2 state_t* state, REG3 int input,
 		}
 	}
 	state->tran[input] = tran;
-	if (rbuf.ignorecase && isalpha(input))
+	if (rbuf.ignorecase && IS_ALPHA(input))
 		state->tran[CHCASE(input)] = tran;
 	return tran;
 }
@@ -375,9 +375,6 @@ void show_dfa_report(void)
 	ntran = (rbuf.last_state+1)*rbuf.language[0];
 	printf("%lu transitions of %lu possible unknown transitions (%lu%%) are unknown\n",
 		utran, ntran, ntran == 0 ? 0 : utran*100/ntran);
-#ifdef __TURBOC__
-	printf("%lu bytes memory free\n", (unsigned long)coreleft());
-#endif
 	fflush(stdout);
 }
 		
@@ -417,7 +414,7 @@ char* char_image(int c)
 			s1 = "BOL";
 			break;
 		default:
-			if (iscntrl(c)) {
+			if (c < ' ' || c == 127) {
 				s[0] = '^';
 				s[1] = '@' + c;
 				s[2] = '\0';

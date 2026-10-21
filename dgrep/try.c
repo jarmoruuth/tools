@@ -33,7 +33,22 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "dfaregex.h"
+#include "getopt.h"
+
+static void usage(void);
+static void multiple(void);
+static void try(char** fields);
+static void complain(char* s1, char* s2);
+static void fatal(char* s1, char* s2);
+
+#ifdef TEST
+extern void show_dfa_report(void);
+extern void print_accepting_states(void);
+extern void print_dtran(void);
+#endif
 
 char buf[BUFSIZ];
 
@@ -44,18 +59,13 @@ int debug = 0;
 int test = 0;
 int type_bits = RE_SEARCH;
 
-main(argc, argv)
-int argc;
-char *argv[];
+int main(int argc, char *argv[])
 {
-	int i;
 	char *r;
 	int		opt;
-	extern int	optind, opterr;
-	extern char	*optarg;
 
-	opterr = 0;	/* handle errors ourselves */
-	while ((opt = getopt(argc, argv, "sifdt")) != EOF) {
+	d_opterr = 0;	/* handle errors ourselves */
+	while ((opt = d_getopt(argc, argv, "sifdt")) != EOF) {
 		switch (opt) {
 			case 's':
 				type_bits &= ~RE_SEARCH;
@@ -77,25 +87,25 @@ char *argv[];
 		}
 	}
 	
-	if (argc-optind == 0) {
+	if (argc-d_optind == 0) {
 		multiple();
 		fflush(stdout);
 		exit(status);
 	}
-	if (argc-optind != 2)
+	if (argc-d_optind != 2)
 		usage();
-	r = reg_comp(argv[optind++], type_bits);
+	r = reg_comp(argv[d_optind++], type_bits);
 	if (r != NULL)
 		complain("reg_comp failure '%s'", r);
 	if (argc > 2) {
-		r = reg_exec(argv[optind], argv[optind]+strlen(argv[optind]), NULL);
-		printf("%s\n", r);
+		r = reg_exec(argv[d_optind], argv[d_optind]+strlen(argv[d_optind]), NULL);
+		printf("%s\n", r != NULL ? r : "(no match)");
 	}
 	fflush(stdout);
 	exit(status);
 }
 
-usage()
+static void usage(void)
 {
 	printf("Usage: try [-siftd] {expr str | < infile}\n");
 	printf( "-s not substring searcher\n"
@@ -108,13 +118,12 @@ usage()
 
 int lineno;
 
-multiple()
+static void multiple(void)
 {
 	char rbuf[BUFSIZ];
 	char *field[5];
 	char *scan;
 	int i;
-	extern char *strchr();
 	char *r;
 
 	errreport = 1;
@@ -155,11 +164,9 @@ multiple()
 		fatal("reg_exec(..., NULL) doesn't complain", "");
 }
 
-try(fields)
-char **fields;
+static void try(char **fields)
 {
 	char *r;
-	char dbuf[BUFSIZ];
 
 	if (test)
 		printf("%d: %s %s %s\n", lineno,fields[0], fields[1], fields[2]);
@@ -202,9 +209,7 @@ char **fields;
 #endif
 }
 
-complain(s1, s2)
-char *s1;
-char *s2;
+static void complain(char *s1, char *s2)
 {
 	printf("try: %d: ", lineno);
 	printf(s1, s2);
@@ -212,9 +217,7 @@ char *s2;
 	/*status = 1;*/
 }
 
-fatal(s1, s2)
-char *s1;
-char *s2;
+static void fatal(char *s1, char *s2)
 {
 	complain(s1, s2);
 #ifdef TEST

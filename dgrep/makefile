@@ -1,49 +1,45 @@
 ######################################################################
 #
-#	Makefile for dgrep and test programs in Windows NT
+#	Makefile for dgrep and test programs in Linux and other POSIX
+#	systems. In Windows use: nmake -f makefile.win
+#
+#	make		builds dgrep and try
+#	make test	builds also dgrep-smallbuf and runs regress.sh
 #
 ######################################################################
 
-dgrep:	dgrep.exe
-try:	try.exe
+CC	= cc
+CFLAGS	= -O2 -Wall
 
-WILDARG	= "C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\lib\amd64\setargv.obj"
+DFASRC	= dfaregex.c dfa.c calcpos.c dfatree.c regmust.c set.c clib.c getopt.c
+DGREPSRC = dgrep.c bm.c $(DFASRC)
+HEADERS	= system.h dfa.h set.h dfaregex.h bm.h getopt.h
 
-CC	= cl
-CFLAGS	= -Ox -GL -c -DECTYPE -W3 -DNT -DMSC -I..\lib
+DFAOBJ	= dfaregex.o dfa.o calcpos.o dfatree.o regmust.o set.o clib.o getopt.o
+DGREPOBJ = dgrep.o bm.o $(DFAOBJ)
+TRYOBJ	= try.o $(DFAOBJ)
 
-LINK	= cl
-LIBS	= -link ..\lib\cwnt.lib
+all: dgrep try
 
-DFAOBJ	= dfaregex.obj dfa.obj calcpos.obj dfatree.obj regmust.obj set.obj clib.obj
-	  
-DGREPOBJ = dgrep.obj bm.obj $(DFAOBJ)
+dgrep: $(DGREPOBJ)
+	$(CC) $(CFLAGS) -o dgrep $(DGREPOBJ)
 
-dgrep.exe: $(DGREPOBJ)
-	$(LINK) $(LFLAGS) $(DGREPOBJ) $(WILDARG) $(LIBS)
+try: $(TRYOBJ)
+	$(CC) $(CFLAGS) -o try $(TRYOBJ)
 
-TRYOBJ = try.obj $(DFAOBJ)
+# dgrep with a tiny input buffer for testing buffer boundaries
+dgrep-smallbuf: $(DGREPSRC) $(HEADERS)
+	$(CC) $(CFLAGS) -DMAXBUF=256 -o dgrep-smallbuf $(DGREPSRC)
 
-try.exe: $(TRYOBJ)
-	$(LINK) $(LFLAGS) $(TRYOBJ) $(LIBS)
+$(DGREPOBJ) try.o: $(HEADERS)
 
-.c.obj:
-	$(CC) $(CFLAGS) $*.c
+.c.o:
+	$(CC) $(CFLAGS) -c $<
 
-dfa.h:		set.h
+test: dgrep try dgrep-smallbuf
+	bash regress.sh ./dgrep ./try ./dgrep-smallbuf
 
-dgrep.obj:	dgrep.c dfaregex.h dfa.h system.h
-	$(CC) $(CFLAGS) dgrep.c
-	
-bm.obj:		bm.c dfa.h system.h
-	$(CC) $(CFLAGS) $*.c
-	
-dfaregex.obj:	dfaregex.c dfaregex.h dfa.h system.h
-dfa.obj:	dfa.c dfa.h system.h
-calcpos.obj:	calcpos.c dfa.h system.h
-dfatree.obj:	dfatree.c dfa.h system.h
-regmust.obj:	regmust.c dfa.h system.h
-set.obj:	set.c set.h system.h
-clib.obj:	clib.c system.h
-try.obj:	try.c dfaregex.h
+clean:
+	rm -f *.o dgrep try dgrep-smallbuf
 
+.PHONY: all test clean
