@@ -355,6 +355,8 @@ static void add_class(REG1 uchar* class)
 		add_regexp(L_PAR);
 		add_regexp(CLASS);
 		add_regexp(last_class);
+		if (!memerr)	/* class index is not a character */
+			regexp[regpos] = last_class;
 		add_regexp(R_PAR);
 	}
 }
