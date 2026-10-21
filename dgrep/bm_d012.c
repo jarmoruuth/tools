@@ -176,7 +176,8 @@ char *boyer_moore(uchar *str, uchar *se, REG6 uchar *pat, int patlen)
 	uchar	*str_plus_large = str + large;
 	uchar	*pat_plus_patlen_minus_1 = pat + patlen - 1;
 	
-	if (patlen == 1)
+	/* memchr can't ignore case */
+	if (patlen == 1 && (!IS_ALPHA(*pat) || ccase['a'] != ccase['A']))
 		return memchr(str, *pat, se-str+1);
 	for (k = str + patlen - 1; ; ) {
 		/* for a large class of patterns, upwards of 80% of 
