@@ -55,7 +55,16 @@ static ulong		matchcount;
 static ulong		linecount;
 static ulong*		linecount_ptr	= NULL;
 
-static int		waiting_lines	= 0;
+/* Context printing state. Offsets are file offsets, so they stay
+   valid when the buffer contents are moved. */
+static long long	buf_offset;	/* file offset of buffer[0] */
+static long long	printed_offset;	/* offset after last printed line, -1 if none */
+static int		trailing_left;	/* trailing context lines to print */
+static ulong		trailing_lineno;/* line number of next trailing line */
+
+#define OFFSET(p)	(buf_offset + ((uchar*)(p) - buffer))
+#define BUFPTR(off)	((char*)buffer + ((off) - buf_offset))
+
 static int		type_bits	= RE_SEARCH;
 static char		file_not_found	= FALSE;
 static char		touch_failed	= FALSE;
@@ -316,51 +325,105 @@ static int get_leading_bytes(char* bufbeg, char* bufend, int* nlines)
 /**********************************************************************
  *
  *	print_context
+ *
+ * Prints at most nlines lines starting from beg, but not past bufend
+ * (the last EOL character that may be printed). Returns the number of
+ * printed lines and sets *next to point after the last printed line.
  */
-static int print_context(char* bufbeg, char* bufend, int nlines, ulong lineno)
+static int print_context(char* beg, char* bufend, int nlines, ulong lineno,
+			 char** next)
 {
 	char*	ptr;
-	char*	linebeg;
+	int	nprinted = 0;
 
-	ptr = linebeg = bufbeg;
-	for (; nlines && ptr <= bufend; ptr++)
+	for (ptr = beg; nprinted < nlines && ptr <= bufend; ptr++)
 		if (*ptr == EOL2) {
-			print_line(linebeg, ptr, lineno++);
-			nlines--;
-			linebeg = ptr + 1;
+			print_line(beg, ptr, lineno++);
+			nprinted++;
+			beg = ptr + 1;
 		}
-	return nlines;
+	*next = beg;
+	return nprinted;
 }
 
 /**********************************************************************
  *
  *	print_trailing_context
+ *
+ * Prints the trailing context lines of the previous match that are
+ * still waiting, but only lines before limit.
  */
-#define print_trailing_context(p1, p2) \
-	print_context((p1), (p2), trailing_context, linecount+1)
+static void print_trailing_context(char* limit)
+{
+	char*	beg;
+	int	n;
+
+	if (trailing_left == 0)
+		return;
+	beg = BUFPTR(printed_offset);
+	if (beg < (char*)buffer)
+		beg = (char*)buffer;
+	n = print_context(beg, limit - 1, trailing_left, trailing_lineno, &beg);
+	trailing_left -= n;
+	trailing_lineno += n;
+	printed_offset = OFFSET(beg);
+}
 
 /**********************************************************************
  *
- *	print_leading_context
+ *	leading_context_beg
+ *
+ * Returns the beginning of the leading context of the line starting
+ * at beg and sets *nlines to the number of the context lines. The
+ * context does not include lines that are already printed.
  */
-static void print_leading_context(char* bufbeg, char* bufend)
+static char* leading_context_beg(char* beg, int* nlines)
 {
-	int	bytes;
+	char*	limit = (char*)buffer;	/* first line in buffer */
+
+	if (printed_offset > OFFSET(limit))
+		limit = BUFPTR(printed_offset);
+	for (*nlines = 0; *nlines < leading_context && beg > limit; ++*nlines) {
+		beg--;	/* EOL of the previous line */
+		while (beg > limit && beg[-1] != EOL2)
+			beg--;
+	}
+	return beg;
+}
+
+/**********************************************************************
+ *
+ *	print_match
+ *
+ * Prints a matching line with its context. Prints a separator line
+ * between groups of lines that are not adjacent.
+ */
+static void print_match(char* beg, char* end)
+{
+	char*	ctxbeg;
 	int	nlines;
-	
-	if (bufbeg >= bufend)
+
+	if (!leading_context && !trailing_context) {
+		print_line(beg, end, linecount);
 		return;
-	nlines = leading_context;
-	bytes = get_leading_bytes(bufbeg, bufend, &nlines);
-	print_context(bufend-bytes+1, bufend, leading_context,
-		linecount-nlines);
+	}
+	print_trailing_context(beg);
+	ctxbeg = leading_context_beg(beg, &nlines);
+	if (!first_match && OFFSET(ctxbeg) != printed_offset)
+		printf("----------\n");
+	first_match = FALSE;
+	print_context(ctxbeg, beg - 1, nlines, linecount - nlines, &ctxbeg);
+	print_line(beg, end, linecount);
+	printed_offset = OFFSET(end + 1);
+	trailing_left = trailing_context;
+	trailing_lineno = linecount + 1;
 }
 
 /**********************************************************************
  *
  *	check_flags
  */
-static status_t check_flags(char* beg, char* end, char* bufend)
+static status_t check_flags(char* beg, char* end)
 {
 	was_match = TRUE;
 	if (touch)
@@ -376,14 +439,7 @@ static status_t check_flags(char* beg, char* end, char* bufend)
 	}
 	if (silent)
 		return OK;
-	if (!first_match && (leading_context || trailing_context))
-		printf("----------\n");
-	first_match = FALSE;
-	if (leading_context)
-		print_leading_context(buffer, beg-1);
-	print_line(beg, end, linecount);
-	if (trailing_context)
-		waiting_lines = print_trailing_context(end+NEOL(end), bufend);
+	print_match(beg, end);
 	if (number)
 		linecount++;
 	return OK;
@@ -427,7 +483,7 @@ static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
 		} else
 			match = reg_exec(line, le, NULL);
 		if ((match && !nonmatch) || (!match && nonmatch)) {
-			if (check_flags(line, le, bufend) == STOP)
+			if (check_flags(line, le) == STOP)
 				return -1;
 		} else
 			linecount++;
@@ -465,7 +521,7 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 			matchptr = bufend;
 		if (regmust_only || !regmust		/* match found or ...*/
 		   || reg_exec(linebeg,matchptr,NULL) != NULL)	/* verify ok */
-			if (check_flags(linebeg, matchptr, bufend) == STOP)
+			if (check_flags(linebeg, matchptr) == STOP)
 				return -1;
 		matchptr++;
 		if (matchptr > bufend)
@@ -481,18 +537,17 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 static int dgrep_buffer(char* buf, int bufsize)
 {
 	char*	bufend;
-	
+	int	nleftover;
+
 	/* bufend is last EOL character in buffer */
 	if ((bufend=d_memrchr(buf+bufsize-1, EOL2, bufsize)) == NULL) {
 		return bufsize;
 	}
-	if (waiting_lines) {
-		print_context(buf, bufend, waiting_lines, 
-			linecount+trailing_context-waiting_lines+1);
-		waiting_lines = 0;
-	}
-	return use_normal ? normal_dgrep(buf, bufend, bufsize)
-			  : fast_dgrep(buf, bufend, bufsize);
+	nleftover = use_normal ? normal_dgrep(buf, bufend, bufsize)
+			       : fast_dgrep(buf, bufend, bufsize);
+	if (nleftover >= 0)
+		print_trailing_context(bufend + 1);
+	return nleftover;
 }
 
 #if 0 /* Pete removed because this is not used anymore ! */
@@ -550,7 +605,9 @@ static void dgrep(int h)
 
 	linecount = 1L;		/* first line number is 1 */
 	matchcount = 0L;
-	waiting_lines = 0;
+	buf_offset = 0;
+	printed_offset = -1;
+	trailing_left = 0;
 	if (verbose && show_fname != NONE) {
 		printf("*** File %s:\n", path);
 		fname_shown = TRUE;
@@ -561,46 +618,48 @@ static void dgrep(int h)
 	nread = align(maxbuf);
 	while ((bufsize = read(h, buffer+leading_bytes+nleftover, nread)) > 0)
 	{
-		/* update nread to contain all bytes in the buffer */
-		nread += leading_bytes+nleftover;
 		bufsize += nleftover;
-#if 0 /* Pete removed, because it behaves erroneusly when input is pipe */
-		if (bufsize + leading_bytes < nread) { /* not full buffer */
-			bufsize += add_last_newline_if(buffer, bufsize + leading_bytes);
-            }
-#endif
 		nleftover = dgrep_buffer(buffer+leading_bytes, bufsize);
-	    if (nleftover < 0) {
-	    	break;
-            } else if (nleftover == bufsize) {
-		    nread = align(maxbuf-leading_bytes-nleftover);
-                if (nread == 0) {
-		        fprintf(stderr, "Warning: No line separator in buffer");
-		        if (show_fname != NONE)
-			        fprintf(stderr, " in file %s", path);
-		        fprintf(stderr, "\n");
-	    		nleftover = 0;
-                }
-	    } else {
-	    	bufsize += leading_bytes;
-		    if (leading_context && bufsize == nread) {
-			    nlines = leading_context;
-			    leading_bytes = 
-				    get_leading_bytes(
-				    buffer,
-				    buffer+bufsize-nleftover-1,
-				    &nlines);
-		    } else {
-			    leading_bytes = 0;
-                }
-			memcpy(buffer, buffer+bufsize-leading_bytes-nleftover,
+		if (nleftover < 0) {
+			break;
+		} else if (nleftover == bufsize) {
+			/* no EOL in buffer, make room for more */
+			if (align(maxbuf-leading_bytes-nleftover) == 0
+			    && leading_bytes > 0) {
+				memmove(buffer, buffer+leading_bytes, nleftover);
+				buf_offset += leading_bytes;
+				leading_bytes = 0;
+			}
+			if (align(maxbuf-leading_bytes-nleftover) == 0) {
+				fprintf(stderr, "Warning: No line separator in buffer");
+				if (show_fname != NONE)
+					fprintf(stderr, " in file %s", path);
+				fprintf(stderr, "\n");
+				buf_offset += nleftover;
+				nleftover = 0;
+			}
+		} else {
+			/* keep leading context lines and the partial last
+			   line, move them to the beginning of buffer */
+			bufsize += leading_bytes;
+			leading_bytes = 0;
+			if (leading_context) {
+				nlines = leading_context;
+				leading_bytes = get_leading_bytes(buffer,
+					buffer+bufsize-nleftover-1, &nlines);
+				if (leading_bytes + nleftover > maxbuf / 2)
+					leading_bytes = 0;
+			}
+			buf_offset += bufsize-leading_bytes-nleftover;
+			memmove(buffer, buffer+bufsize-leading_bytes-nleftover,
 				leading_bytes+nleftover);
-            }
+		}
 		nread = align(maxbuf-leading_bytes-nleftover);
 	}
 	if (nleftover > 0) {
-		buffer[nleftover++] = EOL2;
-		dgrep_buffer(buffer, nleftover);
+		/* last line without EOL, buffer has room for one more byte */
+		buffer[leading_bytes+nleftover] = EOL2;
+		dgrep_buffer(buffer+leading_bytes, nleftover+1);
 	}
 	if (!silent && count && !names) {
 		if (show_fname != NONE)

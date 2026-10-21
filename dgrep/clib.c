@@ -28,12 +28,13 @@ void d_free(void* ptr)
  *
  *	alloc_buffer
  *
- * Allocate I/O-buffer.
+ * Allocate I/O-buffer. There is room for one extra byte after maxbuf
+ * bytes, for an EOL or '\0' character.
  */
 void alloc_buffer(void)
 {
 	maxbuf = MAXBUF;
-	buffer = malloc(MAXBUF);
+	buffer = malloc(MAXBUF + 1);
 	if (buffer == NULL)
 		error("Out of memory when allocating input buffer", 3);
 }
