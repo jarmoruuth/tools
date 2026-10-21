@@ -413,7 +413,7 @@ static uchar* get_class(REG3 uchar* str)
 				class[i] |= class[CHCASE(i)];
 	}
 	if (neg)
-		for (i = 1; i < NCLASSITEMS; i++)
+		for (i = 1; i < NCHARS; i++)	/* not BOL, EOL or REM */
 			class[i] = !class[i];
 	return *str == ']' ? add_class(class),str : NULL;
 }
