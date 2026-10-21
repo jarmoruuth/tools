@@ -194,18 +194,42 @@ t "^ with -i 2"		$'Abc\nxabc\nABC'	'"$D" -i "^a|x" < bol.txt'
 t "8-bit case folding"	''			'"$D" -i -f pat_AE.txt < I_circ.txt'
 
 ######################################################################
+# Compare to GNU grep, if available. Output formats differ only in
+# context lines: GNU grep uses "--" as a separator and "n-" before
+# context line numbers.
+
+for i in $(seq 1 300); do
+	case $((i % 7)) in
+		0)	echo "line $i match here" ;;
+		3)	echo "line $i MATCH again" ;;
+		*)	echo "line $i other text" ;;
+	esac
+done > big.txt
+printf 'last match without newline' >> big.txt
+
+if grep --version 2>/dev/null | grep -q GNU; then
+	for opts in "" "-n" "-c" "-i" "-v" "-n -1" "-n -2" "-n -B3" "-n -A2" \
+		    "-A5" "-n -v -1" "-n -i -2" "-n -B1 -A4"; do
+		for pat in "match" "m.tch|other" "^line 1[0-9]" "newline$" "x" \
+			   "(ma|o)[t]+.*e"; do
+			grep -E $opts "$pat" < big.txt 2>&1 | \
+				sed 's/^--$/----------/; s/^\([0-9][0-9]*\)[-:]/\1:/' > exp.out
+			"$D" $opts "$pat" < big.txt 2>&1 | tr -d '\r' > act.out
+			if cmp -s exp.out act.out; then
+				pass
+			else
+				fail "GNU grep: dgrep $opts '$pat'" \
+					"$(diff exp.out act.out | head -6 | tr '\n' '|')"
+			fi
+		done
+	done
+fi
+
+######################################################################
 # Buffer boundaries: dgrep built with a tiny buffer must give the
 # same output as the normal build.
 
 if [ -n "$SMALL" ]; then
-	for i in $(seq 1 300); do
-		case $((i % 7)) in
-			0)	echo "line $i match here" ;;
-			3)	echo "line $i MATCH again" ;;
-			*)	echo "line $i other text" ;;
-		esac
-	done > big.txt
-	printf 'last match without newline' >> big.txt
 	for opts in "" "-n" "-i" "-v" "-c" "-l" "-n -i" "-1" "-A2" "-B3" \
 		    "-n -2" "-n -B2" "-n -v -A1" "-i -B1" "-d -n" "-x"; do
 		for pat in "match" "m.tch|other" "^line 1[0-9]" "newline$"; do
