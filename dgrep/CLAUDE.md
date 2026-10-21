@@ -10,11 +10,14 @@ parts of it, notably the modified Boyer-Moore initialization in `bm.c` that
 guarantees linear worst-case time, and the 2019 Linux port changes.
 
 It was originally written for MS-DOS / Turbo C and later ported to Microsoft C,
-OS/2, BSD 4.3 (gcc), QNX, Windows NT and Linux. It is historical code: the
-style (K&R-era idioms, `REG1`/`REG2` register macros, `#if`-heavy portability
-code, 16-bit/64k-segment concerns) is intentional and should be preserved.
-Make minimal, targeted changes that match the surrounding code; don't
-modernize or reformat it.
+OS/2, BSD 4.3 (gcc), QNX, Windows NT and Linux. Today only Windows (MSVC)
+and POSIX systems are supported; the code for the older platforms has been
+removed. The coding style (`REG1`/`REG2` register macros, tab indentation,
+banner comments before each function) is kept; match the surrounding code
+and don't reformat it. The current plan is to make dgrep multithreaded.
+
+Some files (e.g. `dfatree.c`) contain non-UTF-8 bytes in comments; edit
+them with tools that keep the bytes as they are.
 
 Documentation: `README` (English overview and benchmarks), `LUEMINUT`
 (the same README in Finnish), `dgrep.doc` (detailed design notes, algorithm
@@ -48,45 +51,56 @@ references, exit codes, portability).
 | `dfa.c` / `dfa.h` | DFA construction with lazy transition cache |
 | `regmust.c` | Extracts the must-match literal from the syntax tree |
 | `set.c` / `set.h` | Bit-set routines used by the DFA construction |
-| `clib.c` | Portability shims, buffer allocation (warned in-file as "a real mess") |
-| `ectype.c` / `ectype.h` | Extended ctype tables (IBM PC / Scandinavian 7-bit charset), enabled with `-DECTYPE` |
-| `getopt.c` / `getopt.h` | Turbo C getopt for DOS builds |
-| `system.h` | All platform configuration and conditional-compilation switches |
+| `clib.c` | Buffer allocation (`MAXBUF` + 1 bytes), `d_free`, `error` |
+| `getopt.c` / `getopt.h` | Portable `d_getopt` (prefixed so it never clashes with libc), used on all platforms |
+| `system.h` | Platform detection and configuration, ASCII-only `IS_LOWER`/`TO_UPPER`/`CHCASE` macros |
 | `try.c` | Regex test driver, adapted from Henry Spencer's regexp test program |
+| `regress.sh` | Regression tests for the whole program (see Testing) |
 | `innerloo.*`, `stat`, `*.opt` | Old notes: assembly listings of the inner loops, timing statistics |
 
-## Conditional compilation (see `system.h`)
+The code has no dependencies outside this directory (the old `..\lib` is not
+used). Case conversion is ASCII-only on purpose, so bytes of UTF-8
+characters are never case folded; don't reintroduce `<ctype.h>` calls on
+values that may be the BOL/EOL/REM pseudo characters (>= 256).
 
-`UNIX` (`\n` line ends; otherwise `\r\n`), `BSD`, `QNX`, `NT`, `MSC`,
-`ECTYPE`, `TEST` (debug dumps, enables `-D`), `MANYREG`, `TOUCH`, and `FAST`
-(faster DFA transition storage at the cost of memory). Builds should use
-unsigned chars (`-funsigned-char` with gcc).
+## Configuration (see `system.h`)
+
+The platform is detected automatically: `_WIN32` selects Windows (`\r\n` line
+ends, `\` path separator), everything else is POSIX (`UNIX` is defined
+internally). Optional defines:
+
+- `TEST` — debug dumps, enables `-D`
+- `NOFAST` — DFA transition tables hold state indexes instead of pointers
+- `MAXBUF=n` — input buffer size (default 24 MB); the tests use 256 to
+  exercise buffer boundaries
 
 ## Building
 
-There are several makefiles, one per platform:
+- **Linux / POSIX**: `make` (uses `cc`), `make test`
+- **Windows** (Developer Command Prompt for Visual Studio):
+  `nmake -f makefile.win`, `nmake -f makefile.win test`. Links the MSVC
+  `setargv.obj` for wildcard expansion of file names.
 
-- **Linux**: `make -f makefile.l2x` (gcc, `-DUNIX -DFAST`, uses `bm_d012.c`)
-- **BSD**: `make -f makefile.bsd`
-- **Windows NT** (MSVC `cl`/nmake): `makefile` — links `..\lib\cwnt.lib` and
-  a hardcoded VS 12.0 `setargv.obj` path for wildcard expansion; adjust as needed
-- **DOS / OS/2**: `makefile.dos`, `makefile.os2` (historical)
-
-Each makefile builds `dgrep` and the `try` test program. Object files and
-binaries are not committed (see the repo `.gitignore`).
+Both build `dgrep` and `try`; `test` also builds `dgrep-smallbuf`
+(`-DMAXBUF=256`) and runs `regress.sh`. `bm.c` is the Boyer-Moore used on
+all platforms; `bm_d012.c` is an alternative with the same interface.
 
 ## Testing
 
-Regression tests run `try` against tab-separated test tables
-(regex, input, expected `y`/`n`/`c`, ...):
+`bash regress.sh dgrep try dgrep-smallbuf` (Git Bash on Windows). It runs:
 
-- `tests` — general cases
-- `tests.s` — cases that must be run with `-s` (anchored, no substring search)
-- `tests.i` — case-insensitive cases
+- named cases for options, exit codes and previously fixed bugs
+- a comparison with GNU `grep -E` when available (normalizing the `--`
+  separator and `n-` context line prefix)
+- a comparison of `dgrep-smallbuf` with `dgrep` over many option/pattern
+  combinations, to test buffer boundaries
+- the `try` regex tables: `tests` (general), `tests.s` (run with `-s`,
+  anchored, no substring search), `tests.i` (case-insensitive)
 
-Run all: `sh tryall.sh` (Unix) or `tryall.bat` (DOS/Windows). `try` options:
-`-s` clears `RE_SEARCH`, `-i` sets `RE_IGNORECASE`, `-f` sets `RE_FULL`
-(longest match), `-t` test mode, `-d` debug output.
+`try` options: `-s` clears `RE_SEARCH`, `-i` sets `RE_IGNORECASE`, `-f` sets
+`RE_FULL` (longest match), `-t` test mode, `-d` debug output.
+
+Run the tests after every change; the exit status is the number of failures.
 
 ## Exit codes
 
