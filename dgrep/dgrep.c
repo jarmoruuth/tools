@@ -620,14 +620,17 @@ static void dgrep_file(REG1 char* src)
 {
 	REG2 int h;	/* file handle */
 
-	if (path_mode) {
-		int srclen = strlen(src);
-		getcwd(fullpath, sizeof(fullpath) - srclen - 2);
-		strcat(fullpath, "\\");
-		strcpy(fullpath + strlen(fullpath), src);
-		path = fullpath;
-	} else {
-		path = src;	/* for filename display */
+	path = src;	/* for filename display */
+	if (path_mode && !IS_ABSPATH(src)
+	    && getcwd(fullpath, sizeof(fullpath)) != NULL) {
+		size_t len = strlen(fullpath);
+
+		if (len + strlen(src) + 2 <= sizeof(fullpath)) {
+			if (len > 0 && fullpath[len-1] != PATHSEP)
+				fullpath[len++] = PATHSEP;
+			strcpy(fullpath + len, src);
+			path = fullpath;
+		}
 	}
 	if ((h=open(src,O_RDONLY|O_BINARY)) != ERROR) {
 		dgrep(h);
