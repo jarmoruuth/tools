@@ -11,11 +11,26 @@
  *
  * Modified Boyer-Moore for guaranteed O(m+n) time performance.
  *	P.Soini 07-Dec-1988
+ *
+ * SSE2 search: two rare bytes of the pattern are compared to 16
+ * positions at a time, and the positions where both match are verified.
+ * Boyer-Moore is used for the end of the buffer and if there are too
+ * many false candidates.
  **********************************************************************/
 
 #include "system.h"
 #include "dfa.h"
 #include "bm.h"
+
+/* SSE2 is in every x86-64 CPU; -DNOSIMD disables it */
+#if !defined(NOSIMD) && (defined(__SSE2__) || defined(_M_X64) \
+			 || (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
+#define BM_SSE2
+#include <emmintrin.h>
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+#endif
 
 #if (MAXREGMUST > MAXCHAR)
 typedef	unsigned short	delta1_jmp_t;
@@ -36,6 +51,12 @@ struct bm_st {
 	   uppercase version of given character, otherwise just the same
 	   character. */
 	uchar		ccase[NCHARS];
+	/* SSE2 search: positions of two rare bytes in the pattern
+	   (rare1 <= rare2) and the bytes in both cases */
+	int		rare1, rare2;
+	uchar		byte1, byte1alt;
+	uchar		byte2, byte2alt;
+	char		iflag;
 };
 
 #ifdef TEST
@@ -65,6 +86,72 @@ void show_boyer_moore_report(const bm_t* bm)
 		inner_cnt, outer_cnt, cmp_cnt);
 }
 #endif
+
+/************************************************************************
+ *	byte_frequency
+ *
+ * Rough frequency of byte c in text, used to pick rare bytes for the
+ * SSE2 search. Lower case letters by English letter frequency, upper
+ * case letters are rarer, space is the most common.
+ */
+static int byte_frequency(int c)
+{
+	/* per mille, a..z */
+	static const unsigned char letters[26] = {
+		82, 15, 28, 43, 127, 22, 20, 61, 70, 2, 8, 40, 24,
+		67, 75, 19, 1, 60, 63, 91, 28, 10, 24, 2, 20, 1
+	};
+
+	if (c == ' ')
+		return 200;
+	if (IS_LOWER(c))
+		return letters[c - 'a'];
+	if (IS_UPPER(c))
+		return letters[c - 'A'] / 4;
+	if (c >= '0' && c <= '9')
+		return 12;
+	if (c == '\t' || c == '.' || c == ',' || c == '_' || c == '-'
+	    || c == '(' || c == ')' || c == ';' || c == '=' || c == '/'
+	    || c == '"' || c == '\'' || c == ':' || c == '*')
+		return 10;
+	return 3;
+}
+
+/************************************************************************
+ *	init_rare
+ *
+ * Selects two rare bytes of the pattern for the SSE2 search.
+ */
+static void init_rare(bm_t* bm, uchar* pat, int patlen, int iflag)
+{
+	int	i, f, r1, r2, f1, f2;
+
+	r1 = r2 = 0;
+	f1 = f2 = 1000;
+	for (i = 0; i < patlen; i++) {
+		f = byte_frequency(pat[i]);
+		if (iflag && IS_ALPHA(pat[i]))
+			f = byte_frequency(CHCASE(pat[i])) + f;
+		if (f < f1) {
+			r2 = r1;
+			f2 = f1;
+			r1 = i;
+			f1 = f;
+		} else if (f < f2) {
+			r2 = i;
+			f2 = f;
+		}
+	}
+	if (patlen == 1)
+		r2 = r1;
+	bm->rare1 = min(r1, r2);
+	bm->rare2 = max(r1, r2);
+	bm->iflag = iflag != 0;
+	bm->byte1 = pat[bm->rare1];
+	bm->byte2 = pat[bm->rare2];
+	bm->byte1alt = iflag ? CHCASE(bm->byte1) : bm->byte1;
+	bm->byte2alt = iflag ? CHCASE(bm->byte2) : bm->byte2;
+}
 
 /************************************************************************
  *	init_c_index
@@ -182,6 +269,7 @@ bm_t*	gosper(char* pat, REG5 int patlen, int iflag)
 	delta0[k = *patend] = bm->large;
 	if (iflag)
 		delta0[CHCASE(k)] = bm->large;
+	init_rare(bm, (uchar*)pat, patlen, iflag);
 	return bm;
 }
 
@@ -199,12 +287,12 @@ void bm_free(bm_t* bm)
 
 /**********************************************************************
  *
- *	boyer_moore
+ *	bm_search
  *
  * "reach out and boyer-moore search someone"
  *  soon-to-be-popular bumper sticker
  */
-char* boyer_moore(const bm_t* bm, char* str, char* strend)
+static char* bm_search(const bm_t* bm, char* str, char* strend)
 {
 	REG1 uchar*	k;
 	REG2 uchar*	p;
@@ -267,4 +355,104 @@ char* boyer_moore(const bm_t* bm, char* str, char* strend)
 		} while (ccase[*k] == *p);
 		k = s + (bm->delta1-1)[patend - p][bm->c_index[*k]];
 	}
+}
+
+#ifdef BM_SSE2
+
+/* after SSE_MINFALSE false candidates, Boyer-Moore is used if there
+   is more than one false candidate in SSE_FALSEGAP bytes */
+#define SSE_MINFALSE	64
+#define SSE_FALSEGAP	32
+
+/**********************************************************************
+ *
+ *	lowest_bit
+ */
+static int lowest_bit(unsigned m)
+{
+#ifdef _MSC_VER
+	unsigned long	i;
+
+	_BitScanForward(&i, m);
+	return (int)i;
+#else
+	return __builtin_ctz(m);
+#endif
+}
+
+/**********************************************************************
+ *
+ *	sse2_search
+ *
+ * Compares the two rare bytes of the pattern to 16 positions at a
+ * time and verifies the positions where both match. Reads only bytes
+ * str .. strend.
+ */
+static char* sse2_search(const bm_t* bm, char* str, char* strend)
+{
+	uchar*		p = (uchar*)str;
+	uchar*		end = (uchar*)strend + 1;	/* after last byte */
+	uchar*		pat = bm->pat;
+	int		patlen = bm->patlen;
+	int		rare1 = bm->rare1;
+	int		rare2 = bm->rare2;
+	const uchar*	ccase = bm->ccase;
+	const __m128i	b1 = _mm_set1_epi8((char)bm->byte1);
+	const __m128i	b1alt = _mm_set1_epi8((char)bm->byte1alt);
+	const __m128i	b2 = _mm_set1_epi8((char)bm->byte2);
+	const __m128i	b2alt = _mm_set1_epi8((char)bm->byte2alt);
+	unsigned	nfalse = 0;
+	unsigned	mask;
+	uchar*		cand;
+	int		i;
+
+	for (; end - p >= rare2 + 16; p += 16) {
+		__m128i	t1 = _mm_loadu_si128((const __m128i*)(p + rare1));
+		__m128i	t2 = _mm_loadu_si128((const __m128i*)(p + rare2));
+		__m128i	e1 = _mm_cmpeq_epi8(t1, b1);
+		__m128i	e2 = _mm_cmpeq_epi8(t2, b2);
+
+		if (bm->iflag) {
+			e1 = _mm_or_si128(e1, _mm_cmpeq_epi8(t1, b1alt));
+			e2 = _mm_or_si128(e2, _mm_cmpeq_epi8(t2, b2alt));
+		}
+		mask = (unsigned)_mm_movemask_epi8(_mm_and_si128(e1, e2));
+		for (; mask != 0; mask &= mask - 1) {
+			cand = p + lowest_bit(mask);
+			if (end - cand < patlen)
+				return NULL;	/* no room for later matches */
+			if (bm->iflag) {
+				for (i = 0; i < patlen && ccase[cand[i]] == pat[i]; i++)
+					;
+			} else
+				i = memcmp(cand, pat, patlen) == 0 ? patlen : 0;
+			if (i == patlen)
+				return (char*)cand;
+			if (++nfalse > SSE_MINFALSE
+			    && nfalse > (unsigned)(cand - (uchar*)str) / SSE_FALSEGAP)
+				return bm_search(bm, (char*)p, strend);
+		}
+	}
+	/* end of buffer, less than 16 positions left */
+	return bm_search(bm, (char*)p, strend);
+}
+
+#endif /* BM_SSE2 */
+
+/**********************************************************************
+ *
+ *	boyer_moore
+ *
+ * Returns the first match of the pattern in str .. strend (inclusive),
+ * or NULL.
+ */
+char* boyer_moore(const bm_t* bm, char* str, char* strend)
+{
+#ifdef BM_SSE2
+	/* bm_search uses memchr, which is faster, for one character
+	   except with -i */
+	if (bm->patlen > 1 || (bm->iflag && IS_ALPHA(*bm->pat)))
+		return sse2_search(bm, str, strend);
+#endif
+	return bm_search(bm, str, strend);
 }

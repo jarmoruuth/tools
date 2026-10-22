@@ -240,6 +240,35 @@ if grep --version 2>/dev/null | grep -q GNU; then
 			fi
 		done
 	done
+
+	# Literal search (SSE2): matches at every position relative to
+	# 16 byte blocks and line ends, and patterns with a candidate at
+	# every position, which make dgrep fall back to Boyer-Moore.
+	{
+		for i in $(seq 0 40); do
+			printf '%*sneedle%*s|\n' $i "" $(( (i * 7) % 19 )) ""
+			printf '%*sNeEdLe\n' $i ""
+		done
+		for i in $(seq 1 30); do
+			printf '%s\n' "$(printf 'a%.0s' $(seq 1 $((i * 9))))"
+			printf '%sb\n' "$(printf 'a%.0s' $(seq 1 $((i * 7))))"
+		done
+		printf 'qQ q Q xq\n'
+	} > sse.txt
+	for opts in "" "-i" "-c" "-n -i" "-v -c"; do
+		for pat in "needle" "dle " "ne" "NeEdLe" "e" "q" "aaaab" "aaaa" \
+			   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab" "b" "ab" \
+			   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; do
+			grep -E $opts "$pat" < sse.txt 2>&1 > exp.out
+			"$D" $opts "$pat" < sse.txt 2>&1 | tr -d '\r' > act.out
+			if cmp -s exp.out act.out; then
+				pass
+			else
+				fail "GNU grep sse.txt: dgrep $opts '$pat'" \
+					"$(diff exp.out act.out | head -6 | tr '\n' '|')"
+			fi
+		done
+	done
 fi
 
 ######################################################################

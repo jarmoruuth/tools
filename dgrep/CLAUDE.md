@@ -85,6 +85,7 @@ internally). Optional defines:
 
 - `TEST` — debug dumps, enables `-D`
 - `NOFAST` — DFA transition tables hold state indexes instead of pointers
+- `NOSIMD` — no SSE2 literal search in `bm.c` (plain Boyer-Moore)
 - `INITBUF=n` — initial input buffer size (default 256 kB); the tests use 256 to
   exercise buffer boundaries and buffer growth
 - `MAXBUF=n` — maximum input buffer size and longest line (default 24 MB)
@@ -98,7 +99,10 @@ internally). Optional defines:
 
 Both build `dgrep` and `try`; `test` also builds `dgrep-smallbuf`
 (`-DINITBUF=256`) and runs `regress.sh`. `bm.c` is the Boyer-Moore used on
-all platforms; `bm_d012.c` is an alternative with the same interface.
+all platforms; on x86-64 it searches literals with SSE2 intrinsics (two rare
+bytes of the pattern compared 16 positions at a time, Boyer-Moore for the
+buffer end and as a fallback when false candidates are dense). `bm_d012.c` is
+an alternative without SIMD, with the same interface.
 
 ## Testing
 
