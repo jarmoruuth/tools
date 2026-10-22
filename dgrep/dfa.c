@@ -223,7 +223,7 @@ static void build_maxtran(regbuf_t* rb)
 	state_cnt = 0;
 	while (state_cnt++ < FIXTRAN && (state = unmarked(rb)) != NULL) {
 		state->marked = TRUE;
-		for (i = 0; i < rb->language[0]; i++) {
+		for (i = 0; i < (int)rb->language[0]; i++) {
 			input = rb->language[i+1];
 			if (input == EOL)
 				continue;
@@ -308,13 +308,14 @@ static tran_t free_cache_pos(regbuf_t* rb, REG4 state_t* state)
 	REG1 unsigned	i;
 	REG2 unsigned	mincnt;
 	REG3 unsigned	minpos;
-	REG5 int	minstate;
+	REG5 unsigned	minstate;
 	
 	if (rb->last_state < NTRAN-1) {
 		rb->last_state++;
 		return transition_to(rb->last_state);
 	}
 	mincnt = ~0; /* == maxint */
+	minpos = max(FIXTRAN, 1);
 	minstate = max(FIXTRAN, 1);	/* never remove state zero */
 	/* find the removed state (the one with smallesr reference count) */
 	for (i = rb->last_state; i >= minstate; i--) {
@@ -369,7 +370,7 @@ void show_dfa_report(regbuf_t* rb)
 		NTRAN,
 		removed_tran_cnt);
 	for (i = 0; i <= rb->last_state; i++)
-		for (j = 0; j < rb->language[0]; j++)
+		for (j = 0; j < (int)rb->language[0]; j++)
 			if (rb->dstates[i]->tran[rb->language[j+1]] == UNKNOWN)
 				utran++;
 	ntran = (rb->last_state+1)*rb->language[0];
@@ -437,7 +438,7 @@ void print_language(regbuf_t* rb)
 	int	i;
 
 	printf("    ");
-	for (i = 0; i < rb->language[0]; i++)
+	for (i = 0; i < (int)rb->language[0]; i++)
 		printf("%3s ", char_image(rb->language[i+1]));
 	printf("\n");
 	fflush(stdout);
@@ -496,7 +497,7 @@ void print_dtran(regbuf_t* rb)
 	print_language(rb);
 	for (i = 0; i <= rb->last_state; i++) {
 		printf("%2d: ", i);
-		for (j = 0; j < rb->language[0]; j++)
+		for (j = 0; j < (int)rb->language[0]; j++)
 			show_tran(rb, rb->dstates[i]->tran[rb->language[j+1]]);
 		printf("\n");
 	}

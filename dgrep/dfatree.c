@@ -476,7 +476,7 @@ static char* make_regexp(REG1 uchar* str)
 	/* Is this really necessary and correct ? */
 	if (((*str == '$' || *str == '^') && *(str+1) == '\0')
 	    || *str == '\0')
-		str = "a*";
+		str = (uchar*)"a*";
 	/* If we are building a substring searcher, change regexp r to form
 	   [0-MAXCHAR]*(r). It guarantees, that substring is found in 
 	   O(n+m)-time.

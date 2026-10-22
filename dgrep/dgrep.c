@@ -545,7 +545,7 @@ static int get_leading_bytes(char* bufbeg, char* bufend, int* nlines)
 	for (; ; ptr--) {
 		if (ptr <= bufbeg) {
 			*nlines = nfound;
-			return bufend - bufbeg + 1;
+			return (int)(bufend - bufbeg + 1);
 		}
 		if (*ptr == EOL2) {
 			nfound++;
@@ -556,7 +556,7 @@ static int get_leading_bytes(char* bufbeg, char* bufend, int* nlines)
 		}
 	}
 	*nlines = nfound - 1;
-	return bufend - ptr + 1;
+	return (int)(bufend - ptr + 1);
 }
 
 /**********************************************************************
@@ -711,7 +711,7 @@ static char* get_linebeg(char* s, char* bufbeg)
 		return bufbeg;
 	if (s[0] == EOL2)
 		s--;
-	s = d_memrchr(s, EOL2, s - bufbeg + 1);
+	s = d_memrchr(s, EOL2, (unsigned)(s - bufbeg + 1));
 	if (s == NULL)
 		return bufbeg;
 	return s+1;
@@ -749,7 +749,7 @@ static int normal_dgrep(REG5 grep_t* gp, char* buf, char* bufend,
 		} else
 			gp->linecount++;
 		le++;
-		if ((bufsize -= (le-line)) <= 0)
+		if ((bufsize -= (int)(le-line)) <= 0)
 			return 0;
 		line = le;
 	}
@@ -807,7 +807,7 @@ static int fast_dgrep(REG4 grep_t* gp, char* buf, REG3 char* bufend,
 	}
 	if (number)
 		gp->linecount += count_eol(counted, bufend + 1);
-	return (buf+bufsize)-(bufend+NEOL(bufend));
+	return (int)((buf+bufsize)-(bufend+NEOL(bufend)));
 }
 
 /**********************************************************************
@@ -984,10 +984,10 @@ static void dgrep(REG4 grep_t* gp, int h)
 					buffer+bufsize-nleftover-1, &nlines);
 				/* leave at least half of the buffer for
 				   reading, drop context only if needed */
-				while (leading_bytes + nleftover > gp->bufsize / 2
+				while ((unsigned)(leading_bytes + nleftover) > gp->bufsize / 2
 				       && gp->bufsize < maxbuf)
 					buffer = grow_buffer(gp);
-				if (leading_bytes + nleftover > gp->bufsize / 2)
+				if ((unsigned)(leading_bytes + nleftover) > gp->bufsize / 2)
 					leading_bytes = 0;
 			}
 			gp->buf_offset += bufsize-leading_bytes-nleftover;
@@ -1156,7 +1156,7 @@ static char* read_exp(REG1 char* str)
 	buf[bufsize] = '\0';
 	if ((str = memchr(buf,'\n',bufsize)) != NULL)
 		*str = '\0';
-	len = strlen(buf);
+	len = (int)strlen(buf);
 	if (len == 0)
 		error("Empty expression in expression file",2);
 	if ((str = malloc(len+1)) == NULL)
@@ -1343,7 +1343,7 @@ int main(int argc, char* argv[])
 		short_usage();
 	if (!expr)
 		expr = argv[optind++];
-	len = strlen(expr);
+	len = (int)strlen(expr);
 	if (exact && (no_boymoore || len > MAXREGMUST || len == 0)) {
 		/* Bm can handle only MAXREGMUST long patterns with
 		   N+M worst case. So we verify match with reg_exec,
@@ -1362,7 +1362,7 @@ int main(int argc, char* argv[])
 			str_toupper((uchar*)regmust);
 		regmust_only = regmust == expr || str_equal(regmust, expr,
 							     ignorecase);
-		regmustlen = strlen(regmust);
+		regmustlen = (int)strlen(regmust);
 		bm = gosper(regmust, regmustlen, ignorecase);
 		/* boyer_moore uses memchr for one character */
 		must_gap = regmustlen == 1

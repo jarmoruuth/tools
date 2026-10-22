@@ -165,12 +165,12 @@ char* reg_exec(regbuf_t* rb, char* strbeg, REG5 char* strend, REG6 ulong* linecn
 	REG1 uchar*     s;
 #ifdef FAST
 	REG2 tran_t	cur_state = FIRST_STATE;
-	REG3 tran_t	prev_state;
+	REG3 tran_t	prev_state = FIRST_STATE;
 #else
 	/* use unsigned state variables, because some compilers can't
 	   put char variables to registers (usually tran_t is char) */
 	REG2 unsigned	cur_state = FIRST_STATE;
-	REG3 unsigned	prev_state;
+	REG3 unsigned	prev_state = FIRST_STATE;
 #endif
 	REG4 int	i;
 	

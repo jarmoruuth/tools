@@ -99,7 +99,7 @@ static int must_len(REG1 node_t* tree, REG2 int* pos)
 bool find_regmust(regbuf_t* rb)
 {
 	REG2 int	len, new_len;
-	REG4 int	pos, save;
+	REG4 int	pos = 0, save;
 	REG1 node_t*	tree = rb->tree;
 	int		root = rb->root;
 

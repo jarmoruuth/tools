@@ -153,7 +153,7 @@ struct regbuf_st {
 	int		root;		/* tree root position */
 	node_t*		tree;		/* syntax tree for regexp */
 	uint*		language;	/* characters in language */
-	char*		eol;		/* end of line characters */
+	uchar*		eol;		/* end of line characters */
 	char		neol;		/* number of end of line characters */
 	char*		regmust;	/* regmust, if any */
 	char*		reg_error;	/* error message, if any */
