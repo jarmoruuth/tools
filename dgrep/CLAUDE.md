@@ -51,7 +51,7 @@ references, exit codes, portability).
 | `dfa.c` / `dfa.h` | DFA construction with lazy transition cache |
 | `regmust.c` | Extracts the must-match literal from the syntax tree |
 | `set.c` / `set.h` | Bit-set routines used by the DFA construction |
-| `clib.c` | Buffer allocation (`MAXBUF` + 1 bytes), `d_free`, `error` |
+| `clib.c` | Buffer allocation (size + 1 bytes), `d_free`, `error` |
 | `getopt.c` / `getopt.h` | Portable `d_getopt` (prefixed so it never clashes with libc), used on all platforms |
 | `system.h` | Platform detection and configuration, ASCII-only `IS_LOWER`/`TO_UPPER`/`CHCASE` macros |
 | `try.c` | Regex test driver, adapted from Henry Spencer's regexp test program |
@@ -78,8 +78,9 @@ internally). Optional defines:
 
 - `TEST` — debug dumps, enables `-D`
 - `NOFAST` — DFA transition tables hold state indexes instead of pointers
-- `MAXBUF=n` — input buffer size (default 24 MB); the tests use 256 to
-  exercise buffer boundaries
+- `INITBUF=n` — initial input buffer size (default 256 kB); the tests use 256 to
+  exercise buffer boundaries and buffer growth
+- `MAXBUF=n` — maximum input buffer size and longest line (default 24 MB)
 
 ## Building
 
@@ -89,7 +90,7 @@ internally). Optional defines:
   `setargv.obj` for wildcard expansion of file names.
 
 Both build `dgrep` and `try`; `test` also builds `dgrep-smallbuf`
-(`-DMAXBUF=256`) and runs `regress.sh`. `bm.c` is the Boyer-Moore used on
+(`-DINITBUF=256`) and runs `regress.sh`. `bm.c` is the Boyer-Moore used on
 all platforms; `bm_d012.c` is an alternative with the same interface.
 
 ## Testing

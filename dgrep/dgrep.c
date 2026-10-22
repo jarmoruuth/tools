@@ -58,7 +58,8 @@ static int		trailing_context= 0;
 */
 typedef struct {
 	regbuf_t*	rb;		/* compiled expression */
-	uchar*		buffer;		/* input buffer, maxbuf+1 bytes */
+	uchar*		buffer;		/* input buffer, bufsize+1 bytes */
+	unsigned	bufsize;	/* buffer size, at most maxbuf */
 	char*		path;		/* current path and filename */
 	char		fullpath[2048];	/* path for -p */
 	ulong		matchcount;
@@ -706,6 +707,25 @@ static int align(int bufsize)
 
 /**********************************************************************
  *
+ *	grow_buffer
+ *
+ * Doubles the input buffer size, up to maxbuf. Returns the new buffer.
+ */
+static char* grow_buffer(grep_t* gp)
+{
+	unsigned	size;
+	uchar*		p;
+
+	size = gp->bufsize > maxbuf / 2 ? maxbuf : 2 * gp->bufsize;
+	if ((p = realloc(gp->buffer, size + 1)) == NULL)
+		error("Out of memory when allocating input buffer", 3);
+	gp->buffer = p;
+	gp->bufsize = size;
+	return (char*)p;
+}
+
+/**********************************************************************
+ *
  *	dgrep
  *
  * Greps previously opened handle h.
@@ -733,7 +753,7 @@ static void dgrep(REG4 grep_t* gp, int h)
 		gp->fname_shown = TRUE;
 	} else
 		gp->fname_shown = FALSE;
-	nread = align(maxbuf);
+	nread = align(gp->bufsize);
 	while ((bufsize = read(h, buffer+leading_bytes+nleftover, nread)) > 0)
 	{
 		bufsize += nleftover;
@@ -742,13 +762,16 @@ static void dgrep(REG4 grep_t* gp, int h)
 			break;
 		} else if (nleftover == bufsize) {
 			/* no EOL in buffer, make room for more */
-			if (align(maxbuf-leading_bytes-nleftover) == 0
+			if (gp->bufsize-leading_bytes-nleftover < ALIGN
+			    && gp->bufsize < maxbuf)
+				buffer = grow_buffer(gp);
+			if (align(gp->bufsize-leading_bytes-nleftover) == 0
 			    && leading_bytes > 0) {
 				memmove(buffer, buffer+leading_bytes, nleftover);
 				gp->buf_offset += leading_bytes;
 				leading_bytes = 0;
 			}
-			if (align(maxbuf-leading_bytes-nleftover) == 0) {
+			if (align(gp->bufsize-leading_bytes-nleftover) == 0) {
 				fprintf(stderr, "Warning: No line separator in buffer");
 				if (show_fname != NONE)
 					fprintf(stderr, " in file %s", gp->path);
@@ -765,14 +788,19 @@ static void dgrep(REG4 grep_t* gp, int h)
 				nlines = leading_context;
 				leading_bytes = get_leading_bytes(buffer,
 					buffer+bufsize-nleftover-1, &nlines);
-				if (leading_bytes + nleftover > maxbuf / 2)
+				/* leave at least half of the buffer for
+				   reading, drop context only if needed */
+				while (leading_bytes + nleftover > gp->bufsize / 2
+				       && gp->bufsize < maxbuf)
+					buffer = grow_buffer(gp);
+				if (leading_bytes + nleftover > gp->bufsize / 2)
 					leading_bytes = 0;
 			}
 			gp->buf_offset += bufsize-leading_bytes-nleftover;
 			memmove(buffer, buffer+bufsize-leading_bytes-nleftover,
 				leading_bytes+nleftover);
 		}
-		nread = align(maxbuf-leading_bytes-nleftover);
+		nread = align(gp->bufsize-leading_bytes-nleftover);
 	}
 	if (nleftover > 0) {
 		/* last line without EOL, buffer has room for one more byte */
@@ -834,7 +862,8 @@ static grep_t* grep_new(void)
 
 	if ((gp = calloc(1, sizeof(grep_t))) == NULL)
 		error("Out of memory", 3);
-	gp->buffer = alloc_buffer();
+	gp->bufsize = min(INITBUF, maxbuf);
+	gp->buffer = alloc_buffer(gp->bufsize);
 	gp->path = "";
 	gp->linecount_ptr = number ? &gp->linecount : NULL;
 	if (!exact) {
@@ -860,7 +889,7 @@ static char* read_exp(REG1 char* str)
 {
 	REG2 int	bufsize;
 	REG3 int	h, len;
-	char*		buf = (char*)alloc_buffer();
+	char*		buf = (char*)alloc_buffer(maxbuf);
 
 	if ((h = open(str, O_RDONLY)) == ERROR)
 		error("Can't open expression file",2);

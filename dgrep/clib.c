@@ -28,11 +28,11 @@ void d_free(void* ptr)
  *	alloc_buffer
  *
  * Allocates an I/O-buffer. There is room for one extra byte after
- * maxbuf bytes, for an EOL or '\0' character.
+ * size bytes, for an EOL or '\0' character.
  */
-uchar* alloc_buffer(void)
+uchar* alloc_buffer(unsigned size)
 {
-	uchar*	buffer = malloc(maxbuf + 1);
+	uchar*	buffer = malloc(size + 1);
 
 	if (buffer == NULL)
 		error("Out of memory when allocating input buffer", 3);

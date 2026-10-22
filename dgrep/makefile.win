@@ -36,7 +36,7 @@ try.exe: $(TRYOBJ)
 # dgrep with a tiny input buffer for testing buffer boundaries
 dgrep-smallbuf.exe: $(DGREPSRC) $(HEADERS)
 	if not exist smallbuf mkdir smallbuf
-	$(CC) $(CFLAGS) -DMAXBUF=256 -Fosmallbuf\ -Fedgrep-smallbuf.exe $(DGREPSRC) $(WILDARG)
+	$(CC) $(CFLAGS) -DINITBUF=256 -Fosmallbuf\ -Fedgrep-smallbuf.exe $(DGREPSRC) $(WILDARG)
 
 $(DGREPOBJ) try.obj: $(HEADERS)
 

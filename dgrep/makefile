@@ -30,7 +30,7 @@ try: $(TRYOBJ)
 
 # dgrep with a tiny input buffer for testing buffer boundaries
 dgrep-smallbuf: $(DGREPSRC) $(HEADERS)
-	$(CC) $(CFLAGS) -DMAXBUF=256 -o dgrep-smallbuf $(DGREPSRC)
+	$(CC) $(CFLAGS) -DINITBUF=256 -o dgrep-smallbuf $(DGREPSRC)
 
 $(DGREPOBJ) try.o: $(HEADERS)
 

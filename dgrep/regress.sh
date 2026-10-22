@@ -11,7 +11,7 @@
 #	dgrep		dgrep binary to test (default ./dgrep)
 #	try		regex test driver; if given, runs the tests,
 #			tests.s and tests.i tables like tryall.sh
-#	dgrep-smallbuf	dgrep built with a tiny I/O buffer (-DMAXBUF=256);
+#	dgrep-smallbuf	dgrep built with a tiny I/O buffer (-DINITBUF=256);
 #			if given, its output is compared to dgrep's to
 #			test the buffer boundary handling
 #
@@ -244,20 +244,33 @@ fi
 
 ######################################################################
 # Buffer boundaries: dgrep built with a tiny buffer must give the
-# same output as the normal build.
+# same output as the normal build. long.txt has lines longer than the
+# tiny buffer, so its buffer must grow.
+
+A3000=$(printf 'a%.0s' $(seq 1 3000))
+{
+	echo "line 1 short match"
+	echo "line 2 ${A3000} match at the end"
+	echo "line 3 short"
+	echo "match ${A3000}${A3000}${A3000} line 4"
+	echo "line 5 short match"
+} > long.txt
+t "long lines"		"5"	'"$D" -c "line" < long.txt'
 
 if [ -n "$SMALL" ]; then
 	for opts in "" "-n" "-i" "-v" "-c" "-l" "-n -i" "-1" "-A2" "-B3" \
 		    "-n -2" "-n -B2" "-n -v -A1" "-i -B1" "-d -n" "-x"; do
 		for pat in "match" "m.tch|other" "^line 1[0-9]" "newline$"; do
-			"$D" $opts "$pat" big.txt 2>&1 | tr -d '\r' > exp.out
-			"$SMALL" $opts "$pat" big.txt 2>&1 | tr -d '\r' > act.out
-			if cmp -s exp.out act.out; then
-				pass
-			else
-				fail "small buffer: dgrep $opts '$pat' big.txt" \
-					"$(diff exp.out act.out | head -6 | tr '\n' '|')"
-			fi
+			for file in big.txt long.txt; do
+				"$D" $opts "$pat" $file 2>&1 | tr -d '\r' > exp.out
+				"$SMALL" $opts "$pat" $file 2>&1 | tr -d '\r' > act.out
+				if cmp -s exp.out act.out; then
+					pass
+				else
+					fail "small buffer: dgrep $opts '$pat' $file" \
+						"$(diff exp.out act.out | head -6 | tr '\n' '|')"
+				fi
+			done
 		done
 	done
 fi

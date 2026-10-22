@@ -13,8 +13,10 @@
  *		  displaying. Debug can be set to TRUE with -D option.
  *	NOFAST	- Uses state indexes instead of state pointers in the dfa
  *		  transition tables. Uses less memory, but is slower.
- *	MAXBUF	- Size of the input buffer, default 24 MB. A tiny buffer
- *		  is useful for testing buffer boundary handling.
+ *	INITBUF	- Initial size of the input buffer, default 256 kB. A tiny
+ *		  buffer is useful for testing buffer boundary handling.
+ *	MAXBUF	- Maximum size of the input buffer (longest line), default
+ *		  24 MB.
  *
  * Author: Jarmo Ruuth 17-Mar-1988
  *
@@ -111,8 +113,13 @@
 #define NCHARS		(1 << CHARBITS)
 #define MAXCHAR		(NCHARS-1)
 
+/* The input buffer starts with INITBUF bytes and grows up to MAXBUF
+   bytes when a line does not fit. MAXBUF is the longest line. */
 #ifndef MAXBUF
 #define MAXBUF		(1024*1024*24)
+#endif
+#ifndef INITBUF
+#define INITBUF		(256*1024)
 #endif
 #define MAXREGMUST	MAXCHAR
 
@@ -130,9 +137,9 @@ typedef unsigned long	ulong;
 
 extern void  d_free(void* ptr);
 extern void  error(char* errmsg, int exit_value);
-extern uchar* alloc_buffer(void);
+extern uchar* alloc_buffer(unsigned size);
 
-extern unsigned	maxbuf;
+extern unsigned	maxbuf;	/* maximum input buffer size */
 
 #ifdef TEST
 #define dassert	assert
