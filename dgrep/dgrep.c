@@ -16,6 +16,7 @@
 #include "dfaregex.h"
 #include "bm.h"
 #include "getopt.h"
+#include "walk.h"
 #include <threads.h>
 #ifdef USE_SSE2
 #include <emmintrin.h>
@@ -51,6 +52,7 @@ static char		no_boymoore	= FALSE;
 static char		touch		= FALSE;
 static char		block_mode	= FALSE;
 static char		path_mode	= FALSE;
+static char		recursive	= FALSE;
 static char		verbose		= FALSE;
 static int		leading_context	= 0;
 static int		trailing_context= 0;
@@ -202,6 +204,7 @@ static char* options1 = {
       "\t -l   only names of files with matching lines are printed\n"
       "\t -n   each line is preceded by its relative line number in file\n"
 	  "\t -p   filename is printed with full path\n"
+	  "\t -r   directories are searched recursively\n"
       "\t -s   silent mode, nothing is printed except error messages\n"
 };
 
@@ -1157,6 +1160,9 @@ static int get_args(REG1 int argc, char* argv[])
 			case 'p':
 				path_mode = TRUE;
 				break;
+			case 'r':
+				recursive = TRUE;
+				break;
 			case 's':
 				silent = TRUE;
 				break;
@@ -1308,12 +1314,24 @@ int main(int argc, char* argv[])
 	if (touch)
 		touch_time.actime = touch_time.modtime = time(NULL);
 	nfile = argc - optind;
-	if (nfile > 0) {
+	if (nfile > 0 || recursive) {
 		if (block_mode)
 			show_fname = BLOCK;
 		else
 			show_fname = BEFORE_LINE;
-		grep_files(gp, &argv[optind], nfile);
+		if (recursive) {
+			filelist_t	fl = { NULL, 0, 0 };
+
+			/* without files search the current directory */
+			if (nfile == 0 && !walk_path(&fl, ""))
+				gp->file_not_found = TRUE;
+			for (; optind < argc; optind++)
+				if (!walk_path(&fl, argv[optind]))
+					gp->file_not_found = TRUE;
+			if (fl.n > 0)
+				grep_files(gp, fl.names, fl.n);
+		} else
+			grep_files(gp, &argv[optind], nfile);
 	} else {
 		out_begin(gp, -1);
 		dgrep(gp, fileno(stdin));

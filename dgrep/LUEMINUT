@@ -30,6 +30,7 @@ Options: -An  n lines after the matching line are printed
          -l   only names of files with matching lines are printed
          -n   each line is preceded by its relative line number in file
          -p   filename is printed with full path
+         -r   directories are searched recursively
          -s   silent mode, nothing is printed except error messages
          -t   all files that contain matches are touched
          -v   all lines but those matching are printed

@@ -53,6 +53,7 @@ references, exit codes, portability).
 | `set.c` / `set.h` | Bit-set routines used by the DFA construction |
 | `clib.c` | Buffer allocation (size + 1 bytes), `d_free`, `error` |
 | `getopt.c` / `getopt.h` | Portable `d_getopt` (prefixed so it never clashes with libc), used on all platforms |
+| `walk.c` / `walk.h` | Directory walking for `-r`: sorted entries, symlinks and special files skipped inside trees (POSIX `opendir`/`d_type`, Windows `FindFirstFileExA`) |
 | `system.h` | Platform detection and configuration, ASCII-only `IS_LOWER`/`TO_UPPER`/`CHCASE` macros |
 | `try.c` | Regex test driver, adapted from Henry Spencer's regexp test program |
 | `regress.sh` | Regression tests for the whole program (see Testing) |

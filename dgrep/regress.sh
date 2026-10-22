@@ -40,6 +40,13 @@ case "$OSTYPE" in
 	*)			WINDOWS= ;;
 esac
 
+# path separator in the file names dgrep prints
+if [ -n "$WINDOWS" ]; then
+	PSEP='\'
+else
+	PSEP='/'
+fi
+
 if [ ! -x "$D" ]; then
 	echo "regress.sh: can't execute $D" >&2
 	exit 99
@@ -151,6 +158,50 @@ t "files verbose"	$'*** File mf1.txt:\na\nm1\nb\n*** File mf2.txt:\n*** File mf3
 t "files count"		$'mf1.txt:1\nmf2.txt:0\nmf3.txt:2'	'"$D" -c m $MF'
 t "files names"		$'mf1.txt\nmf3.txt'	'"$D" -l m $MF'
 
+# -r: sorted, recursive, empty directories, current directory
+S=$PSEP
+mkdir -p tree/b/d tree/empty
+printf 'match a\n' > tree/a.txt
+printf 'match c\nother\n' > tree/b/c.txt
+printf 'no\n' > tree/b/d/e.txt
+printf 'match f\n' > tree/b/d/f.txt
+printf 'match z\n' > tree/z.txt
+TREE="tree${S}a.txt:match a
+tree${S}b${S}c.txt:match c
+tree${S}b${S}d${S}f.txt:match f
+tree${S}z.txt:match z"
+t "-r"			"$TREE"			'"$D" -r match tree'
+t "-r current dir"	"a.txt:match a
+b${S}c.txt:match c
+b${S}d${S}f.txt:match f
+z.txt:match z"						'(cd tree && "$D" -r match)'
+t "-r -l"		"tree${S}a.txt
+tree${S}b${S}c.txt
+tree${S}b${S}d${S}f.txt
+tree${S}z.txt"						'"$D" -r -l match tree'
+t "-r -c"		"tree${S}a.txt:1
+tree${S}b${S}c.txt:1
+tree${S}b${S}d${S}e.txt:0
+tree${S}b${S}d${S}f.txt:1
+tree${S}z.txt:1"					'"$D" -r -c match tree'
+t "-r file and dir"	"a.txt:apple
+tree${S}a.txt:match a"					'"$D" -r "apple|match a" a.txt tree'
+t "-r -j1"		"$TREE"			'"$D" -r -j1 match tree'
+s "-r no match"		1	'"$D" -r -s nomatch tree'
+s "-r missing dir"	2	'"$D" -r -s match tree no-such-dir'
+s "-r empty dir"	1	'"$D" -r -s match tree/empty'
+if [ -z "$WINDOWS" ]; then
+	# symbolic links in the tree are skipped, on the command line
+	# followed
+	ln -s b tree/link
+	ln -s a.txt tree/flink
+	mkfifo tree/fifo
+	t "-r skips links"	"$TREE"		'timeout 10 "$D" -r match tree'
+	t "-r follows arg link"	"tree/link/c.txt:match c
+tree/link/d/f.txt:match f"				'"$D" -r match tree/link'
+	rm -f tree/link tree/flink tree/fifo
+fi
+
 s "status match"	0	'"$D" apple a.txt'
 s "status no match"	1	'"$D" kiwi a.txt'
 s "status syntax error"	2	'"$D" "a(b" a.txt'
@@ -174,11 +225,6 @@ t "DGREP env 2 options"	$'a.txt:1:apple\na.txt:2:APPLE'	'DGREP="-i -n" "$D" appl
 # -p prepended current directory also to absolute paths
 t "-p absolute path"	"$("$D" apple "$W/a.txt" 2>&1 | tr -d '\r')" \
 						'"$D" -p apple "$W/a.txt"'
-if [ -n "$WINDOWS" ]; then
-	PSEP='\'
-else
-	PSEP='/'
-fi
 out=$("$D" -p apple a.txt 2>&1 | tr -d '\r')
 case "$out" in
 	*"${PSEP}a.txt:apple")	pass ;;

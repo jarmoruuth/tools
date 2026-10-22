@@ -13,11 +13,11 @@ CC	= cc
 CFLAGS	= -O2 -Wall -pthread
 
 DFASRC	= dfaregex.c dfa.c calcpos.c dfatree.c regmust.c set.c clib.c getopt.c
-DGREPSRC = dgrep.c bm.c $(DFASRC)
-HEADERS	= system.h dfa.h set.h dfaregex.h bm.h getopt.h
+DGREPSRC = dgrep.c bm.c walk.c $(DFASRC)
+HEADERS	= system.h dfa.h set.h dfaregex.h bm.h getopt.h walk.h
 
 DFAOBJ	= dfaregex.o dfa.o calcpos.o dfatree.o regmust.o set.o clib.o getopt.o
-DGREPOBJ = dgrep.o bm.o $(DFAOBJ)
+DGREPOBJ = dgrep.o bm.o walk.o $(DFAOBJ)
 TRYOBJ	= try.o $(DFAOBJ)
 
 all: dgrep try

@@ -14,12 +14,12 @@ CC	= cl
 CFLAGS	= -nologo -O2 -W3 -std:c11
 
 DFASRC	= dfaregex.c dfa.c calcpos.c dfatree.c regmust.c set.c clib.c getopt.c
-DGREPSRC = dgrep.c bm.c $(DFASRC)
-HEADERS	= system.h dfa.h set.h dfaregex.h bm.h getopt.h
+DGREPSRC = dgrep.c bm.c walk.c $(DFASRC)
+HEADERS	= system.h dfa.h set.h dfaregex.h bm.h getopt.h walk.h
 
 DFAOBJ	= dfaregex.obj dfa.obj calcpos.obj dfatree.obj regmust.obj set.obj \
 	  clib.obj getopt.obj
-DGREPOBJ = dgrep.obj bm.obj $(DFAOBJ)
+DGREPOBJ = dgrep.obj bm.obj walk.obj $(DFAOBJ)
 TRYOBJ	= try.obj $(DFAOBJ)
 
 # setargv.obj comes with Visual C++ and expands wildcards in file names
