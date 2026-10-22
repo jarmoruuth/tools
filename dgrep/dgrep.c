@@ -65,6 +65,18 @@ static ulong		trailing_lineno;/* line number of next trailing line */
 #define OFFSET(p)	(buf_offset + ((uchar*)(p) - buffer))
 #define BUFPTR(off)	((char*)buffer + ((off) - buf_offset))
 
+/* Searching the regmust string first and verifying the line with the
+   dfa is slower than plain dfa if the regmust string is common. After
+   MUSTCHECK hits in a buffer, regmust is not used for the rest of the
+   buffer if there was a hit on average more often than every must_gap
+   bytes. One character is searched with memchr, which is much faster
+   than Boyer-Moore with a short pattern, so it can have more hits. */
+#define MUSTCHECK	64
+#define MUSTGAP_BM	128
+#define MUSTGAP_MEMCHR	64
+#define MUST_TOO_COMMON(p, buf)	((p) - (buf) < MUSTCHECK * must_gap)
+
+static int		must_gap;
 static int		type_bits	= RE_SEARCH;
 static char		file_not_found	= FALSE;
 static char		touch_failed	= FALSE;
@@ -474,12 +486,17 @@ static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
 	REG3 char*	line = buf;	/* current line */
 	REG2 char*	le;		/* line end */
 	REG1 char*	match;
+	bool		use_must = regmust != NULL;
+	int		nhits = 0;
 
 	while ((le = memchr(line, EOL2, bufsize)) != NULL) {
-		if (regmust) {
+		if (use_must) {
 			match = boyer_moore(line,le,regmust,regmustlen);
-			if (match != NULL && !regmust_only)
+			if (match != NULL && !regmust_only) {
 				match = reg_exec(line, le, NULL);
+				if (++nhits == MUSTCHECK && MUST_TOO_COMMON(line, buf))
+					use_must = FALSE;
+			}
 		} else
 			match = reg_exec(line, le, NULL);
 		if ((match && !nonmatch) || (!match && nonmatch)) {
@@ -506,12 +523,21 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 {
 	REG1 char*	matchptr = buf;
 	REG2 char*	linebeg;	/* beginning of current line */
+	bool		use_must = regmust != NULL;
+	bool		verify;		/* must verify match with dfa */
+	int		nhits = 0;
 
 	for (;;) {
-		if (regmust)
+		if (use_must) {
 			matchptr = boyer_moore(matchptr,bufend,regmust,regmustlen);
-		else
+			verify = !regmust_only;
+			if (verify && ++nhits == MUSTCHECK && matchptr != NULL
+			    && MUST_TOO_COMMON(matchptr, buf))
+				use_must = FALSE;
+		} else {
 			matchptr = reg_exec(matchptr, bufend, linecount_ptr);
+			verify = FALSE;
+		}
 		if (matchptr == NULL)
 			break;
 		linebeg = get_linebeg(matchptr, buf);
@@ -519,8 +545,7 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 		matchptr = memchr(matchptr, EOL2, bufend-matchptr);
 		if (matchptr == NULL)
 			matchptr = bufend;
-		if (regmust_only || !regmust		/* match found or ...*/
-		   || reg_exec(linebeg,matchptr,NULL) != NULL)	/* verify ok */
+		if (!verify || reg_exec(linebeg,matchptr,NULL) != NULL)
 			if (check_flags(linebeg, matchptr) == STOP)
 				return -1;
 		matchptr++;
@@ -915,10 +940,11 @@ int main(int argc, char* argv[])
 		}
 		regmust_only = (strcmp(regmust,expr) == 0);
 		regmustlen = strlen(regmust);
-		if (!regmust_only && regmustlen <= 1)
-			regmust = NULL;
-		else
-			gosper(regmust, regmustlen, ignorecase);
+		gosper(regmust, regmustlen, ignorecase);
+		/* boyer_moore uses memchr for one character */
+		must_gap = regmustlen == 1
+			   && !(ignorecase && IS_ALPHA(*regmust))
+			   ? MUSTGAP_MEMCHR : MUSTGAP_BM;
 	}
 	use_normal = nonmatch || (regmust && number);
 	nfile = argc - optind;

@@ -162,6 +162,8 @@ cat big.txt $FILES > /dev/null
 #
 #	literal-*	Boyer-Moore search
 #	regmust-*	Boyer-Moore for the must-match string, then dfa
+#	must1-*		one character must-match string (memchr), then dfa;
+#			dgrep falls back to plain dfa if it is too common
 #	dfa-*		dfa only, no must-match string
 #	dfa-states	needs about 256 dfa states, more than the dfa
 #			cache (NTRAN) holds
@@ -173,7 +175,11 @@ literal-common;-c;quick;big
 literal-ignorecase;-c -i;ruuthian;big
 regmust-simple;-c;qu[a-z]*k;big
 regmust-alt;-c;(alpha|beta)[0-9]+x;big
-dfa-class;-c;[0-9][0-9]x;big
+regmust-common;-c;th.e;big
+must1-rare;-c;[0-9][0-9]x;big
+must1-common;-c;[a-z]k[a-z];big
+must1-every-line;-c;[st][a-z]*t;big
+dfa-class;-c;[0-9][0-9][xy];big
 dfa-alt;-c;(alpha|beta|gamma)[0-9];big
 dfa-states;-c;a.......b;big
 line-numbers;-c -n;alpha[0-9]+x;big

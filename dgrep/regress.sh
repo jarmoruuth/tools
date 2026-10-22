@@ -210,8 +210,10 @@ printf 'last match without newline' >> big.txt
 if grep --version 2>/dev/null | grep -q GNU; then
 	for opts in "" "-n" "-c" "-i" "-v" "-n -1" "-n -2" "-n -B3" "-n -A2" \
 		    "-A5" "-n -v -1" "-n -i -2" "-n -B1 -A4"; do
+		# "e.t" and "[st][a-z]*t" have a common one character
+		# must-match string, dgrep switches to plain dfa for them
 		for pat in "match" "m.tch|other" "^line 1[0-9]" "newline$" "x" \
-			   "(ma|o)[t]+.*e"; do
+			   "(ma|o)[t]+.*e" "e.t" "[st][a-z]*t" "[0-9]2 m"; do
 			grep -E $opts "$pat" < big.txt 2>&1 | \
 				sed 's/^--$/----------/; s/^\([0-9][0-9]*\)[-:]/\1:/' > exp.out
 			"$D" $opts "$pat" < big.txt 2>&1 | tr -d '\r' > act.out
