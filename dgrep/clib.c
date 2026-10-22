@@ -11,7 +11,12 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define NOGDI		/* wingdi.h defines ERROR */
+/* winnt.h defines MAXCHAR as 0x7f, keep ours */
+#pragma push_macro("MAXCHAR")
+#undef MAXCHAR
 #include <windows.h>
+#undef MAXCHAR
+#pragma pop_macro("MAXCHAR")
 #endif
 
 unsigned	maxbuf = MAXBUF;	/* input buffer size */
