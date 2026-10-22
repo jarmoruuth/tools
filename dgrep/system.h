@@ -130,9 +130,8 @@ typedef unsigned long	ulong;
 
 extern void  d_free(void* ptr);
 extern void  error(char* errmsg, int exit_value);
-extern void  alloc_buffer(void);
+extern uchar* alloc_buffer(void);
 
-extern uchar*	buffer;
 extern unsigned	maxbuf;
 
 #ifdef TEST

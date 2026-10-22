@@ -58,6 +58,13 @@ references, exit codes, portability).
 | `regress.sh` | Regression tests for the whole program (see Testing) |
 | `innerloo.*`, `stat`, `*.opt` | Old notes: assembly listings of the inner loops, timing statistics |
 
+State for multithreading: options and the search setup (`bm_t`, `regmust`,
+`expr`) are globals that are only read after `main` sets them up. Everything
+that changes while grepping a file is in a `grep_t` (`dgrep.c`): its own
+`regbuf_t` (the lazy DFA writes to it while matching), input buffer, line
+counters, context state and output buffer (`out_mem`/`out_flush`). Compiling
+an expression (`dfatree.c`) is not reentrant; do it on one thread.
+
 The code has no dependencies outside this directory (the old `..\lib` is not
 used). Case conversion is ASCII-only on purpose, so bytes of UTF-8
 characters are never case folded; don't reintroduce `<ctype.h>` calls on

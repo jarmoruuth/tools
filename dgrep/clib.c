@@ -7,8 +7,7 @@
 
 #include "system.h"
 
-unsigned	maxbuf;
-uchar*		buffer;
+unsigned	maxbuf = MAXBUF;	/* input buffer size */
 
 /**********************************************************************
  *
@@ -28,15 +27,16 @@ void d_free(void* ptr)
  *
  *	alloc_buffer
  *
- * Allocate I/O-buffer. There is room for one extra byte after maxbuf
- * bytes, for an EOL or '\0' character.
+ * Allocates an I/O-buffer. There is room for one extra byte after
+ * maxbuf bytes, for an EOL or '\0' character.
  */
-void alloc_buffer(void)
+uchar* alloc_buffer(void)
 {
-	maxbuf = MAXBUF;
-	buffer = malloc(MAXBUF + 1);
+	uchar*	buffer = malloc(maxbuf + 1);
+
 	if (buffer == NULL)
 		error("Out of memory when allocating input buffer", 3);
+	return buffer;
 }
 
 /**********************************************************************

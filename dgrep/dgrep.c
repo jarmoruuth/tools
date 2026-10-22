@@ -30,7 +30,7 @@ typedef enum {
 	BLOCK		/* name displayed only once before matching lines */
 } show_fname_t;
 
-/* flags and local variables */
+/* Options. They are set in main and only read after that. */
 
 #ifdef TEST
 int			debug		= FALSE;
@@ -46,24 +46,49 @@ static char		silent		= FALSE;
 static char		no_boymoore	= FALSE;
 static char		touch		= FALSE;
 static char		block_mode	= FALSE;
-static char     path_mode   = FALSE;
+static char		path_mode	= FALSE;
 static char		verbose		= FALSE;
 static int		leading_context	= 0;
 static int		trailing_context= 0;
 
-static ulong		matchcount;
-static ulong		linecount;
-static ulong*		linecount_ptr	= NULL;
+/*
+	State of grepping one file. All functions that grep a file get
+	a grep_t* gp parameter, and the OFFSET and BUFPTR macros use it.
+	There will be one grep_t for each thread.
+*/
+typedef struct {
+	regbuf_t*	rb;		/* compiled expression */
+	uchar*		buffer;		/* input buffer, maxbuf+1 bytes */
+	char*		path;		/* current path and filename */
+	char		fullpath[2048];	/* path for -p */
+	ulong		matchcount;
+	ulong		linecount;
+	ulong*		linecount_ptr;	/* &linecount with -n, else NULL */
+	char		fname_shown;	/* block mode file name printed */
+	/* Context printing state. Offsets are file offsets, so they stay
+	   valid when the buffer contents are moved. */
+	long long	buf_offset;	/* file offset of buffer[0] */
+	long long	printed_offset;	/* offset after last printed line, -1 if none */
+	int		trailing_left;	/* trailing context lines to print */
+	ulong		trailing_lineno;/* line number of next trailing line */
+	char		sep_before;	/* separator before output if earlier
+					   files printed context groups */
+	char		groups;		/* context groups printed */
+	/* Output is collected here and written with out_flush */
+	char*		out;
+	size_t		outlen;
+	size_t		outsize;
+	/* results */
+	char		was_match;
+	char		file_not_found;
+	char		touch_failed;
+} grep_t;
 
-/* Context printing state. Offsets are file offsets, so they stay
-   valid when the buffer contents are moved. */
-static long long	buf_offset;	/* file offset of buffer[0] */
-static long long	printed_offset;	/* offset after last printed line, -1 if none */
-static int		trailing_left;	/* trailing context lines to print */
-static ulong		trailing_lineno;/* line number of next trailing line */
+#define OFFSET(p)	(gp->buf_offset + ((uchar*)(p) - gp->buffer))
+#define BUFPTR(off)	((char*)gp->buffer + ((off) - gp->buf_offset))
 
-#define OFFSET(p)	(buf_offset + ((uchar*)(p) - buffer))
-#define BUFPTR(off)	((char*)buffer + ((off) - buf_offset))
+/* output is written when there is at least OUTFLUSH bytes */
+#define OUTFLUSH	(64*1024)
 
 /* Searching the regmust string first and verifying the line with the
    dfa is slower than plain dfa if the regmust string is common. After
@@ -76,22 +101,19 @@ static ulong		trailing_lineno;/* line number of next trailing line */
 #define MUSTGAP_MEMCHR	64
 #define MUST_TOO_COMMON(p, buf)	((p) - (buf) < MUSTCHECK * must_gap)
 
+/* Search setup. Set in main and only read after that. */
 static int		must_gap;
 static int		type_bits	= RE_SEARCH;
-static char		file_not_found	= FALSE;
-static char		touch_failed	= FALSE;
-static char		was_match	= FALSE;
 static show_fname_t	show_fname	= NONE;
-static char		fname_shown	= FALSE;
-static char		first_match	= TRUE;
-static char*		path		= "";	/* current path and filename */
 static char*		expr		= NULL;
-static regbuf_t*	rb;		/* compiled expression */
 static bm_t*		bm;		/* Boyer-Moore tables for regmust */
 static char*		regmust	= NULL;
-static char     fullpath[2048];
 static int		regmustlen;
 static char		use_normal;
+static struct utimbuf	touch_time;	/* time for -t */
+
+/* Output state */
+static char		groups_printed	= FALSE; /* context groups written */
 
 /* By default, use time() as a random number generator */
 #define drandom()	((unsigned)time(NULL))
@@ -243,6 +265,21 @@ static void str_toupper(REG1 uchar* s)
 
 /**********************************************************************
  *
+ *	str_equal
+ *
+ * Compares strings, ignoring the case of ASCII letters if ignorecase.
+ */
+static bool str_equal(REG1 char* s1, REG2 char* s2, int ignorecase)
+{
+	if (!ignorecase)
+		return strcmp(s1, s2) == 0;
+	for (; *s1 && TO_UPPER(*s1) == TO_UPPER(*s2); s1++, s2++)
+		;
+	return *s1 == *s2;
+}
+
+/**********************************************************************
+ *
  *	d_memrchr
  */
 static char* d_memrchr(REG1 char* b, REG3 char c, REG2 unsigned n)
@@ -256,29 +293,67 @@ static char* d_memrchr(REG1 char* b, REG3 char c, REG2 unsigned n)
 
 /**********************************************************************
  *
+ *	out_mem
+ *
+ * Adds len bytes to the output of gp.
+ */
+static void out_mem(REG1 grep_t* gp, const char* s, size_t len)
+{
+	if (gp->outlen + len > gp->outsize) {
+		size_t	size = max(2 * gp->outsize, gp->outlen + len);
+
+		if ((gp->out = realloc(gp->out, size)) == NULL)
+			error("Out of memory", 3);
+		gp->outsize = size;
+	}
+	memcpy(gp->out + gp->outlen, s, len);
+	gp->outlen += len;
+}
+
+#define out_str(gp, s)	out_mem((gp), (s), strlen(s))
+
+/**********************************************************************
+ *
+ *	out_flush
+ *
+ * Writes the output collected in gp. If the output starts with a
+ * context group and the earlier output had groups, a separator is
+ * written first.
+ */
+static void out_flush(grep_t* gp)
+{
+	if (gp->sep_before) {
+		if (groups_printed)
+			fputs("----------\n", stdout);
+		gp->sep_before = FALSE;
+	}
+	if (gp->groups)
+		groups_printed = TRUE;
+	fwrite(gp->out, 1, gp->outlen, stdout);
+	gp->outlen = 0;
+}
+
+/**********************************************************************
+ *
  *	show_number
  */
-static void show_number(ulong number)
+static void show_number(grep_t* gp, ulong number)
 {
-	printf("%s%lu", show_fname == BEFORE_LINE ? ":" : "", number);
+	char	s[24];
+
+	sprintf(s, "%s%lu", show_fname == BEFORE_LINE ? ":" : "", number);
+	out_str(gp, s);
 }
 
 /**********************************************************************
  *
  *	touch_file
  */
-static void touch_file(char* fname)
+static void touch_file(grep_t* gp)
 {
-	static struct utimbuf	touch_time;
-	static int	first_time = TRUE;
-	
-	if (first_time) {
-		first_time = FALSE;
-		touch_time.actime = touch_time.modtime = time(NULL);
-	}
-	if (utime(fname, &touch_time) != 0) {
-		fprintf(stderr, "Warning: Can't touch file %s\n", fname);
-		touch_failed = TRUE;
+	if (utime(gp->path, &touch_time) != 0) {
+		fprintf(stderr, "Warning: Can't touch file %s\n", gp->path);
+		gp->touch_failed = TRUE;
 	}
 }
 
@@ -286,28 +361,28 @@ static void touch_file(char* fname)
  *
  *	print_line
  */
-static void print_line(char* beg, REG1 char* end, ulong lineno)
+static void print_line(REG2 grep_t* gp, char* beg, REG1 char* end, ulong lineno)
 {
-	REG3 int	c;
-
 	dassert(*end == EOL2);
-	
+
 	if (end > beg && end[-1] == EOL1)
 		end--;
-	c = *end;
-	*end = '\0';
 	if (show_fname == BEFORE_LINE)
-		fputs(path, stdout);
-	else if (show_fname == BLOCK && !fname_shown) {
-		printf("*** File %s:\n", path);
-		fname_shown = TRUE;
+		out_str(gp, gp->path);
+	else if (show_fname == BLOCK && !gp->fname_shown) {
+		out_str(gp, "*** File ");
+		out_str(gp, gp->path);
+		out_str(gp, ":\n");
+		gp->fname_shown = TRUE;
 	}
 	if (number)
-		show_number(lineno);
+		show_number(gp, lineno);
 	if (show_fname == BEFORE_LINE || number)
-		printf(":");
-	printf("%s\n", beg);
-	*end = c;
+		out_mem(gp, ":", 1);
+	out_mem(gp, beg, end - beg);
+	out_mem(gp, "\n", 1);
+	if (gp->outlen >= OUTFLUSH)
+		out_flush(gp);
 }
 
 /**********************************************************************
@@ -344,15 +419,15 @@ static int get_leading_bytes(char* bufbeg, char* bufend, int* nlines)
  * (the last EOL character that may be printed). Returns the number of
  * printed lines and sets *next to point after the last printed line.
  */
-static int print_context(char* beg, char* bufend, int nlines, ulong lineno,
-			 char** next)
+static int print_context(grep_t* gp, char* beg, char* bufend, int nlines,
+			 ulong lineno, char** next)
 {
 	char*	ptr;
 	int	nprinted = 0;
 
 	for (ptr = beg; nprinted < nlines && ptr <= bufend; ptr++)
 		if (*ptr == EOL2) {
-			print_line(beg, ptr, lineno++);
+			print_line(gp, beg, ptr, lineno++);
 			nprinted++;
 			beg = ptr + 1;
 		}
@@ -367,20 +442,21 @@ static int print_context(char* beg, char* bufend, int nlines, ulong lineno,
  * Prints the trailing context lines of the previous match that are
  * still waiting, but only lines before limit.
  */
-static void print_trailing_context(char* limit)
+static void print_trailing_context(REG1 grep_t* gp, char* limit)
 {
 	char*	beg;
 	int	n;
 
-	if (trailing_left == 0)
+	if (gp->trailing_left == 0)
 		return;
-	beg = BUFPTR(printed_offset);
-	if (beg < (char*)buffer)
-		beg = (char*)buffer;
-	n = print_context(beg, limit - 1, trailing_left, trailing_lineno, &beg);
-	trailing_left -= n;
-	trailing_lineno += n;
-	printed_offset = OFFSET(beg);
+	beg = BUFPTR(gp->printed_offset);
+	if (beg < (char*)gp->buffer)
+		beg = (char*)gp->buffer;
+	n = print_context(gp, beg, limit - 1, gp->trailing_left,
+		gp->trailing_lineno, &beg);
+	gp->trailing_left -= n;
+	gp->trailing_lineno += n;
+	gp->printed_offset = OFFSET(beg);
 }
 
 /**********************************************************************
@@ -391,12 +467,12 @@ static void print_trailing_context(char* limit)
  * at beg and sets *nlines to the number of the context lines. The
  * context does not include lines that are already printed.
  */
-static char* leading_context_beg(char* beg, int* nlines)
+static char* leading_context_beg(grep_t* gp, char* beg, int* nlines)
 {
-	char*	limit = (char*)buffer;	/* first line in buffer */
+	char*	limit = (char*)gp->buffer;	/* first line in buffer */
 
-	if (printed_offset > OFFSET(limit))
-		limit = BUFPTR(printed_offset);
+	if (gp->printed_offset > OFFSET(limit))
+		limit = BUFPTR(gp->printed_offset);
 	for (*nlines = 0; *nlines < leading_context && beg > limit; ++*nlines) {
 		beg--;	/* EOL of the previous line */
 		while (beg > limit && beg[-1] != EOL2)
@@ -410,52 +486,61 @@ static char* leading_context_beg(char* beg, int* nlines)
  *	print_match
  *
  * Prints a matching line with its context. Prints a separator line
- * between groups of lines that are not adjacent.
+ * between groups of lines that are not adjacent. For the first group
+ * in a file, out_flush decides if a separator is needed, because it
+ * depends on the output of the earlier files (except in block mode,
+ * where the file name separates the groups).
  */
-static void print_match(char* beg, char* end)
+static void print_match(REG1 grep_t* gp, char* beg, char* end)
 {
 	char*	ctxbeg;
 	int	nlines;
 
 	if (!leading_context && !trailing_context) {
-		print_line(beg, end, linecount);
+		print_line(gp, beg, end, gp->linecount);
 		return;
 	}
-	print_trailing_context(beg);
-	ctxbeg = leading_context_beg(beg, &nlines);
-	if (!first_match && OFFSET(ctxbeg) != printed_offset)
-		printf("----------\n");
-	first_match = FALSE;
-	print_context(ctxbeg, beg - 1, nlines, linecount - nlines, &ctxbeg);
-	print_line(beg, end, linecount);
-	printed_offset = OFFSET(end + 1);
-	trailing_left = trailing_context;
-	trailing_lineno = linecount + 1;
+	print_trailing_context(gp, beg);
+	ctxbeg = leading_context_beg(gp, beg, &nlines);
+	if (gp->printed_offset >= 0) {
+		if (OFFSET(ctxbeg) != gp->printed_offset)
+			out_str(gp, "----------\n");
+	} else if (show_fname != BLOCK)
+		gp->sep_before = TRUE;
+	gp->groups = TRUE;
+	print_context(gp, ctxbeg, beg - 1, nlines, gp->linecount - nlines,
+		&ctxbeg);
+	print_line(gp, beg, end, gp->linecount);
+	gp->printed_offset = OFFSET(end + 1);
+	gp->trailing_left = trailing_context;
+	gp->trailing_lineno = gp->linecount + 1;
 }
 
 /**********************************************************************
  *
  *	check_flags
  */
-static status_t check_flags(char* beg, char* end)
+static status_t check_flags(REG1 grep_t* gp, char* beg, char* end)
 {
-	was_match = TRUE;
+	gp->was_match = TRUE;
 	if (touch)
-		touch_file(path);
+		touch_file(gp);
 	if (names) {
-		if (!silent)
-			printf("%s\n", path);
+		if (!silent) {
+			out_str(gp, gp->path);
+			out_mem(gp, "\n", 1);
+		}
 		return STOP;
 	}
 	if (count) {
-		matchcount++;
+		gp->matchcount++;
 		return OK;
 	}
 	if (silent)
 		return OK;
-	print_match(beg, end);
+	print_match(gp, beg, end);
 	if (number)
-		linecount++;
+		gp->linecount++;
 	return OK;
 }
 
@@ -483,7 +568,8 @@ static char* get_linebeg(char* s, char* bufbeg)
  * When use_normal is TRUE, use this. This version separates
  * lines from buffer and then searches pattern from that line.
  */
-static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
+static int normal_dgrep(REG5 grep_t* gp, char* buf, char* bufend,
+			REG4 int bufsize)
 {
 	REG3 char*	line = buf;	/* current line */
 	REG2 char*	le;		/* line end */
@@ -495,17 +581,17 @@ static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
 		if (use_must) {
 			match = boyer_moore(bm, line, le);
 			if (match != NULL && !regmust_only) {
-				match = reg_exec(rb, line, le, NULL);
+				match = reg_exec(gp->rb, line, le, NULL);
 				if (++nhits == MUSTCHECK && MUST_TOO_COMMON(line, buf))
 					use_must = FALSE;
 			}
 		} else
-			match = reg_exec(rb, line, le, NULL);
+			match = reg_exec(gp->rb, line, le, NULL);
 		if ((match && !nonmatch) || (!match && nonmatch)) {
-			if (check_flags(line, le) == STOP)
+			if (check_flags(gp, line, le) == STOP)
 				return -1;
 		} else
-			linecount++;
+			gp->linecount++;
 		le++;
 		if ((bufsize -= (le-line)) <= 0)
 			return 0;
@@ -521,7 +607,8 @@ static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
  * Searches pattern from the whole buffer, and when a match is found, 
  * makes a line from the match position.
  */
-static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
+static int fast_dgrep(REG4 grep_t* gp, char* buf, REG3 char* bufend,
+		      int bufsize)
 {
 	REG1 char*	matchptr = buf;
 	REG2 char*	linebeg;	/* beginning of current line */
@@ -537,7 +624,8 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 			    && MUST_TOO_COMMON(matchptr, buf))
 				use_must = FALSE;
 		} else {
-			matchptr = reg_exec(rb, matchptr, bufend, linecount_ptr);
+			matchptr = reg_exec(gp->rb, matchptr, bufend,
+					    gp->linecount_ptr);
 			verify = FALSE;
 		}
 		if (matchptr == NULL)
@@ -547,8 +635,8 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 		matchptr = memchr(matchptr, EOL2, bufend-matchptr);
 		if (matchptr == NULL)
 			matchptr = bufend;
-		if (!verify || reg_exec(rb, linebeg, matchptr, NULL) != NULL)
-			if (check_flags(linebeg, matchptr) == STOP)
+		if (!verify || reg_exec(gp->rb, linebeg, matchptr, NULL) != NULL)
+			if (check_flags(gp, linebeg, matchptr) == STOP)
 				return -1;
 		matchptr++;
 		if (matchptr > bufend)
@@ -561,7 +649,7 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
  *
  *	dgrep_buffer
  */
-static int dgrep_buffer(char* buf, int bufsize)
+static int dgrep_buffer(grep_t* gp, char* buf, int bufsize)
 {
 	char*	bufend;
 	int	nleftover;
@@ -570,10 +658,10 @@ static int dgrep_buffer(char* buf, int bufsize)
 	if ((bufend=d_memrchr(buf+bufsize-1, EOL2, bufsize)) == NULL) {
 		return bufsize;
 	}
-	nleftover = use_normal ? normal_dgrep(buf, bufend, bufsize)
-			       : fast_dgrep(buf, bufend, bufsize);
+	nleftover = use_normal ? normal_dgrep(gp, buf, bufend, bufsize)
+			       : fast_dgrep(gp, buf, bufend, bufsize);
 	if (nleftover >= 0)
-		print_trailing_context(bufend + 1);
+		print_trailing_context(gp, bufend + 1);
 	return nleftover;
 }
 
@@ -622,31 +710,34 @@ static int align(int bufsize)
  *
  * Greps previously opened handle h.
  */
-static void dgrep(int h)
+static void dgrep(REG4 grep_t* gp, int h)
 {
 	REG1 int	bufsize;
 	REG2 int	nleftover = 0;
 	REG3 int	leading_bytes = 0;
+	char*		buffer = (char*)gp->buffer;
 	int		nlines;
 	int		nread;
 
-	linecount = 1L;		/* first line number is 1 */
-	matchcount = 0L;
-	buf_offset = 0;
-	printed_offset = -1;
-	trailing_left = 0;
+	gp->linecount = 1L;	/* first line number is 1 */
+	gp->matchcount = 0L;
+	gp->buf_offset = 0;
+	gp->printed_offset = -1;
+	gp->trailing_left = 0;
+	gp->sep_before = FALSE;
+	gp->groups = FALSE;
 	if (verbose && show_fname != NONE) {
-		printf("*** File %s:\n", path);
-		fname_shown = TRUE;
+		out_str(gp, "*** File ");
+		out_str(gp, gp->path);
+		out_str(gp, ":\n");
+		gp->fname_shown = TRUE;
 	} else
-		fname_shown = FALSE;
-	if (show_fname == BLOCK)	/* reset context match flag */
-		first_match = TRUE;
+		gp->fname_shown = FALSE;
 	nread = align(maxbuf);
 	while ((bufsize = read(h, buffer+leading_bytes+nleftover, nread)) > 0)
 	{
 		bufsize += nleftover;
-		nleftover = dgrep_buffer(buffer+leading_bytes, bufsize);
+		nleftover = dgrep_buffer(gp, buffer+leading_bytes, bufsize);
 		if (nleftover < 0) {
 			break;
 		} else if (nleftover == bufsize) {
@@ -654,15 +745,15 @@ static void dgrep(int h)
 			if (align(maxbuf-leading_bytes-nleftover) == 0
 			    && leading_bytes > 0) {
 				memmove(buffer, buffer+leading_bytes, nleftover);
-				buf_offset += leading_bytes;
+				gp->buf_offset += leading_bytes;
 				leading_bytes = 0;
 			}
 			if (align(maxbuf-leading_bytes-nleftover) == 0) {
 				fprintf(stderr, "Warning: No line separator in buffer");
 				if (show_fname != NONE)
-					fprintf(stderr, " in file %s", path);
+					fprintf(stderr, " in file %s", gp->path);
 				fprintf(stderr, "\n");
-				buf_offset += nleftover;
+				gp->buf_offset += nleftover;
 				nleftover = 0;
 			}
 		} else {
@@ -677,7 +768,7 @@ static void dgrep(int h)
 				if (leading_bytes + nleftover > maxbuf / 2)
 					leading_bytes = 0;
 			}
-			buf_offset += bufsize-leading_bytes-nleftover;
+			gp->buf_offset += bufsize-leading_bytes-nleftover;
 			memmove(buffer, buffer+bufsize-leading_bytes-nleftover,
 				leading_bytes+nleftover);
 		}
@@ -686,14 +777,15 @@ static void dgrep(int h)
 	if (nleftover > 0) {
 		/* last line without EOL, buffer has room for one more byte */
 		buffer[leading_bytes+nleftover] = EOL2;
-		dgrep_buffer(buffer+leading_bytes, nleftover+1);
+		dgrep_buffer(gp, buffer+leading_bytes, nleftover+1);
 	}
 	if (!silent && count && !names) {
 		if (show_fname != NONE)
-			fputs(path, stdout);
-		show_number(matchcount);
-		printf("\n");
+			out_str(gp, gp->path);
+		show_number(gp, gp->matchcount);
+		out_mem(gp, "\n", 1);
 	}
+	out_flush(gp);
 }
 
 /**********************************************************************
@@ -702,29 +794,60 @@ static void dgrep(int h)
  *
  * Greps file defined in src.
  */
-static void dgrep_file(REG1 char* src)
+static void dgrep_file(REG3 grep_t* gp, REG1 char* src)
 {
 	REG2 int h;	/* file handle */
+	char*	fullpath = gp->fullpath;
 
-	path = src;	/* for filename display */
+	gp->path = src;	/* for filename display */
 	if (path_mode && !IS_ABSPATH(src)
-	    && getcwd(fullpath, sizeof(fullpath)) != NULL) {
+	    && getcwd(fullpath, sizeof(gp->fullpath)) != NULL) {
 		size_t len = strlen(fullpath);
 
-		if (len + strlen(src) + 2 <= sizeof(fullpath)) {
+		if (len + strlen(src) + 2 <= sizeof(gp->fullpath)) {
 			if (len > 0 && fullpath[len-1] != PATHSEP)
 				fullpath[len++] = PATHSEP;
 			strcpy(fullpath + len, src);
-			path = fullpath;
+			gp->path = fullpath;
 		}
 	}
 	if ((h=open(src,O_RDONLY|O_BINARY)) != ERROR) {
-		dgrep(h);
+		dgrep(gp, h);
 		close(h);
 	} else {
 		/* fprintf(stderr, "Warning: Can't open file %s\n", src); */
-		file_not_found = TRUE;
+		gp->file_not_found = TRUE;
 	}
+}
+
+/**********************************************************************
+ *
+ *	grep_new
+ *
+ * Allocates a new grep_t with its own input buffer and compiled
+ * expression.
+ */
+static grep_t* grep_new(void)
+{
+	grep_t*	gp;
+	char*	s;
+
+	if ((gp = calloc(1, sizeof(grep_t))) == NULL)
+		error("Out of memory", 3);
+	gp->buffer = alloc_buffer();
+	gp->path = "";
+	gp->linecount_ptr = number ? &gp->linecount : NULL;
+	if (!exact) {
+		char eolbuf[2];
+
+		eolbuf[0] = EOL1;
+		eolbuf[1] = EOL2;
+		gp->rb = reg_alloc();
+		s = reg_comp_eol(gp->rb, expr, eolbuf, NEOL(eolbuf), type_bits);
+		if (s != NULL)
+			error(s, 2);
+	}
+	return gp;
 }
 
 /**********************************************************************
@@ -733,26 +856,30 @@ static void dgrep_file(REG1 char* src)
  *
  * Reads an expression from a file.
  */
-static uchar* read_exp(REG1 char* str)
+static char* read_exp(REG1 char* str)
 {
 	REG2 int	bufsize;
 	REG3 int	h, len;
+	char*		buf = (char*)alloc_buffer();
 
 	if ((h = open(str, O_RDONLY)) == ERROR)
 		error("Can't open expression file",2);
-	if ((bufsize = read(h, buffer, maxbuf)) == 0)
+	if ((bufsize = read(h, buf, maxbuf)) == 0)
 		error("Empty expression file",2);
 	if (bufsize == ERROR)
 		error("Error when reading expression file",3);
-	buffer[bufsize] = '\0';
-	if ((str = memchr(buffer,'\n',bufsize)) != NULL)
+	close(h);
+	buf[bufsize] = '\0';
+	if ((str = memchr(buf,'\n',bufsize)) != NULL)
 		*str = '\0';
-	len = strlen(buffer);
+	len = strlen(buf);
 	if (len == 0)
 		error("Empty expression in expression file",2);
 	if ((str = malloc(len+1)) == NULL)
 		error("Out of memory",3);
-	return strcpy(str, buffer);
+	strcpy(str, buf);
+	free(buf);
+	return str;
 }
 
 /**********************************************************************
@@ -792,7 +919,6 @@ static int get_args(REG1 int argc, char* argv[])
 				break;
 			case 'n':
 				number = TRUE;
-				linecount_ptr = &linecount;
 				break;
 			case 'p':
 				path_mode = TRUE;
@@ -903,11 +1029,10 @@ int main(int argc, char* argv[])
 	REG3 char*	s;
 	REG4 int	len;
 	int		nfile;
+	grep_t*		gp;
 
 	if (argc == 1)
 		short_usage();
-	alloc_buffer();	/* Allocate I/O buffer */
-	rb = reg_alloc();
 	s = getenv("DGREP");
 	if (s != NULL)
 		argv = add_env_args(s, &argc, argv);
@@ -926,22 +1051,15 @@ int main(int argc, char* argv[])
 		expr = quote_expr(expr, len);
 		exact = FALSE;
 	}
-	if (!exact) {
-		char eolbuf[2];
-		eolbuf[0] = EOL1;
-		eolbuf[1] = EOL2;
-		s = reg_comp_eol(rb, expr, eolbuf, NEOL(eolbuf), type_bits);
-		if (s != NULL)
-			error(s, 2);
-	}
+	gp = grep_new();	/* compiles expr if not exact */
 	if (!no_boymoore)
-		regmust = exact ? expr : rb->regmust;
+		regmust = exact ? expr : gp->rb->regmust;
 	if (regmust) {
-		if (ignorecase) {
-			str_toupper(regmust);
-			str_toupper(expr);
-		}
-		regmust_only = (strcmp(regmust,expr) == 0);
+		/* expr is not changed, it is compiled again for each grep_t */
+		if (ignorecase)
+			str_toupper((uchar*)regmust);
+		regmust_only = regmust == expr || str_equal(regmust, expr,
+							     ignorecase);
 		regmustlen = strlen(regmust);
 		bm = gosper(regmust, regmustlen, ignorecase);
 		/* boyer_moore uses memchr for one character */
@@ -950,6 +1068,8 @@ int main(int argc, char* argv[])
 			   ? MUSTGAP_MEMCHR : MUSTGAP_BM;
 	}
 	use_normal = nonmatch || (regmust && number);
+	if (touch)
+		touch_time.actime = touch_time.modtime = time(NULL);
 	nfile = argc - optind;
 	if (nfile > 0) {
 		if (block_mode)
@@ -957,16 +1077,18 @@ int main(int argc, char* argv[])
 		else
 			show_fname = BEFORE_LINE;
 		while (optind < argc)
-			dgrep_file(argv[optind++]);
+			dgrep_file(gp, argv[optind++]);
 	} else
-		dgrep(fileno(stdin));
+		dgrep(gp, fileno(stdin));
 #ifdef TEST
 	if (debug) {
 		printf("maxbuf = %d\n", maxbuf);
-		show_dfa_report(rb);
+		if (gp->rb != NULL)
+			show_dfa_report(gp->rb);
 		show_boyer_moore_report(bm);
 		fflush(stdout);
 	}
 #endif
-	return (file_not_found || touch_failed) ? 2 : was_match ? 0 : 1;
+	return (gp->file_not_found || gp->touch_failed) ? 2
+		: gp->was_match ? 0 : 1;
 }

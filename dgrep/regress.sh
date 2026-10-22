@@ -107,6 +107,9 @@ printf 'last line without newline' > nonl.txt
 printf '\xc3\x84\n' > pat_AE.txt
 printf '\xc3\x8e\n' > I_circ.txt
 printf 'first|second\n' > pat_or.txt
+printf 'a\nm1\nb\n' > mf1.txt
+printf 'x\ny\n' > mf2.txt
+printf 'm2\nc\nd\ne\nm3\n' > mf3.txt
 
 A64=$(printf 'a%.0s' $(seq 1 64))
 A31=$(printf 'a%.0s' $(seq 1 31))
@@ -133,6 +136,18 @@ t "count per file"	$'a.txt:1\nc.txt:0'	'"$D" -c apple a.txt c.txt'
 t "expression file"	$'first\nsecond'	'printf "first\nthird\nsecond\n" | "$D" -f pat_or.txt'
 t "no final newline"	'last line without newline'	'"$D" without < nonl.txt'
 t "dfa only"		$'apple\nbanana'	'"$D" -d "an|ppl" < a.txt'
+
+# output of several files, in order, with context separators between
+# and inside files
+MF="mf1.txt mf2.txt mf3.txt"
+t "files context"	$'mf1.txt:a\nmf1.txt:m1\nmf1.txt:b\n----------\nmf3.txt:m2\nmf3.txt:c\n----------\nmf3.txt:e\nmf3.txt:m3' \
+						'"$D" -1 m $MF'
+t "files block context"	$'*** File mf1.txt:\na\nm1\nb\n*** File mf3.txt:\nm2\nc\n----------\ne\nm3' \
+						'"$D" -b -1 m $MF'
+t "files verbose"	$'*** File mf1.txt:\na\nm1\nb\n*** File mf2.txt:\n*** File mf3.txt:\nm2\nc\n----------\ne\nm3' \
+						'"$D" -z -1 m $MF'
+t "files count"		$'mf1.txt:1\nmf2.txt:0\nmf3.txt:2'	'"$D" -c m $MF'
+t "files names"		$'mf1.txt\nmf3.txt'	'"$D" -l m $MF'
 
 s "status match"	0	'"$D" apple a.txt'
 s "status no match"	1	'"$D" kiwi a.txt'
