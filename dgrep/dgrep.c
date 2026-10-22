@@ -53,6 +53,16 @@ static char		touch		= FALSE;
 static char		block_mode	= FALSE;
 static char		path_mode	= FALSE;
 static char		recursive	= FALSE;
+
+/* Binary files (files that contain a NUL byte) */
+typedef enum {
+	BIN_MATCHES,	/* print "Binary file x matches" (default) */
+	BIN_TEXT,	/* -a, grep as text */
+	BIN_SKIP	/* -I, skip binary files */
+} binary_files_t;
+
+static binary_files_t	binary_files	= BIN_MATCHES;
+static char		zap_nul		= FALSE; /* NULs to EOLs in binary files */
 static char		verbose		= FALSE;
 static int		leading_context	= 0;
 static int		trailing_context= 0;
@@ -86,6 +96,7 @@ typedef struct {
 	ulong		matchcount;
 	ulong		linecount;
 	char		fname_shown;	/* block mode file name printed */
+	char		binary;		/* file contains a NUL byte */
 	/* Context printing state. Offsets are file offsets, so they stay
 	   valid when the buffer contents are moved. */
 	long long	buf_offset;	/* file offset of buffer[0] */
@@ -197,10 +208,12 @@ static char* version_line = {
 static char* options1 = {
 "Options: -An  n lines after the matching line are printed\n"
       "\t -Bn  n lines before the matching line are printed\n"
+      "\t -a   binary files are grepped as text\n"
       "\t -b   filename is displayed only once before matches\n"
       "\t -c   only a count of matching lines is printed\n"
       "\t -d   only dfa is used for searching\n"
       "\t -i   case insensitive match\n"
+      "\t -I   binary files are skipped\n"
       "\t -l   only names of files with matching lines are printed\n"
       "\t -n   each line is preceded by its relative line number in file\n"
 	  "\t -p   filename is printed with full path\n"
@@ -671,6 +684,14 @@ static status_t check_flags(REG1 grep_t* gp, char* beg, char* end)
 		gp->matchcount++;
 		return OK;
 	}
+	if (gp->binary && binary_files == BIN_MATCHES) {
+		if (!silent) {
+			out_str(gp, "Binary file ");
+			out_str(gp, gp->path[0] ? gp->path : "(standard input)");
+			out_str(gp, " matches\n");
+		}
+		return STOP;
+	}
 	if (silent)
 		return OK;
 	print_match(gp, beg, end);
@@ -850,6 +871,33 @@ static int align(int bufsize)
 
 /**********************************************************************
  *
+ *	check_binary
+ *
+ * Checks if the newly read data p .. p+n-1 contains a NUL byte, which
+ * makes the file binary. In a binary file NULs are changed to EOLs if
+ * only "Binary file x matches" is printed: lines stay short and the
+ * text between NULs is still searched. Returns STOP if the file is
+ * skipped (-I).
+ */
+static status_t check_binary(grep_t* gp, char* p, int n)
+{
+	char*	end = p + n;
+
+	if (!gp->binary) {
+		if (memchr(p, '\0', n) == NULL)
+			return OK;
+		gp->binary = TRUE;
+		if (binary_files == BIN_SKIP)
+			return STOP;
+	}
+	if (zap_nul)
+		while ((p = memchr(p, '\0', end - p)) != NULL)
+			*p++ = EOL2;
+	return OK;
+}
+
+/**********************************************************************
+ *
  *	grow_buffer
  *
  * Doubles the input buffer size, up to maxbuf. Returns the new buffer.
@@ -894,9 +942,14 @@ static void dgrep(REG4 grep_t* gp, int h)
 		gp->fname_shown = TRUE;
 	} else
 		gp->fname_shown = FALSE;
+	gp->binary = FALSE;
 	nread = align(gp->bufsize);
 	while ((bufsize = read(h, buffer+leading_bytes+nleftover, nread)) > 0)
 	{
+		if (binary_files != BIN_TEXT)
+			if (check_binary(gp, buffer+leading_bytes+nleftover, bufsize)
+			    == STOP)
+				break;
 		bufsize += nleftover;
 		nleftover = dgrep_buffer(gp, buffer+leading_bytes, bufsize);
 		if (nleftover < 0) {
@@ -1122,7 +1175,7 @@ static int get_args(REG1 int argc, char* argv[])
 	REG2 int	opt;
 
 	d_opterr = FALSE;	/* handle errors ourselves */
-	while ((opt = d_getopt(argc, argv, "bdchilnoprstvxz123456789A:B:e:f:j:D")) != EOF) {
+	while ((opt = d_getopt(argc, argv, "abdchilnoprstvxzI123456789A:B:e:f:j:D")) != EOF) {
 		switch (opt) {
 			case 'j':
 				nthreads = atoi(d_optarg);
@@ -1162,6 +1215,12 @@ static int get_args(REG1 int argc, char* argv[])
 				break;
 			case 'r':
 				recursive = TRUE;
+				break;
+			case 'a':
+				binary_files = BIN_TEXT;
+				break;
+			case 'I':
+				binary_files = BIN_SKIP;
 				break;
 			case 's':
 				silent = TRUE;
@@ -1311,6 +1370,7 @@ int main(int argc, char* argv[])
 			   ? MUSTGAP_MEMCHR : MUSTGAP_BM;
 	}
 	use_normal = nonmatch;
+	zap_nul = binary_files == BIN_MATCHES && !count && !nonmatch;
 	if (touch)
 		touch_time.actime = touch_time.modtime = time(NULL);
 	nfile = argc - optind;

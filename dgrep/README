@@ -21,10 +21,12 @@ dgrep -h the following help is displayed:
 Usage: dgrep [options] {-f expression file | [-e] expression} [file...]
 Options: -An  n lines after the matching line are printed
          -Bn  n lines before the matching line are printed
+         -a   binary files are grepped as text
          -b   filename is displayed only once before matches
          -c   only a count of matching lines is printed
          -d   only dfa is used for searching
          -i   case insensitive match
+         -I   binary files are skipped
          -l   only names of files with matching lines are printed
          -n   each line is preceded by its relative line number in file
          -p   filename is printed with full path

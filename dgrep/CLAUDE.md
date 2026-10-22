@@ -59,6 +59,12 @@ references, exit codes, portability).
 | `regress.sh` | Regression tests for the whole program (see Testing) |
 | `innerloo.*`, `stat`, `*.opt` | Old notes: assembly listings of the inner loops, timing statistics |
 
+Binary files: a file is binary when a NUL byte is read (`check_binary`, each
+read chunk). By default the first match prints "Binary file X matches" (to
+stdout, in file order) and the file is done; NULs are then changed to EOLs so
+buffers stay small. `-a` greps binary files as text, `-I` skips them; `-c`
+and `-v` count and match as text.
+
 Threads: files are grepped in parallel (`-j`, default CPU count, at most
 16) with C11 `<threads.h>` (MSVC needs `-std:c11`; POSIX builds use
 `-pthread`). Options and the search setup (`bm_t`, `regmust`, `expr`) are

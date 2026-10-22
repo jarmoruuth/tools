@@ -202,6 +202,34 @@ tree/link/d/f.txt:match f"				'"$D" -r match tree/link'
 	rm -f tree/link tree/flink tree/fifo
 fi
 
+# binary files (a NUL byte): only a message by default, -a greps as
+# text, -I skips them
+printf 'abc\0def\nmatch 1\nmatch 2\n' > bin1.bin
+printf 'xx\0yy\0zz match\0ww\n' > bin2.bin
+t "binary"		'Binary file bin1.bin matches'	'"$D" match bin1.bin'
+t "binary stdin"	'Binary file (standard input) matches' '"$D" match < bin1.bin'
+t "binary -a"		$'bin1.bin:match 1\nbin1.bin:match 2' '"$D" -a match bin1.bin'
+t "binary -I"		'a.txt:apple'		'"$D" -I "apple|match" a.txt bin1.bin'
+t "binary -c"		'bin1.bin:2'		'"$D" -c match bin1.bin'
+t "binary -l"		'bin1.bin'		'"$D" -l match bin1.bin'
+t "binary between NULs"	'Binary file bin2.bin matches'	'"$D" "zz m" bin2.bin'
+t "binary no match"	''			'"$D" nomatch bin1.bin'
+s "binary status"	0	'"$D" -s match bin1.bin'
+s "binary -I status"	1	'"$D" -s -I match bin1.bin'
+# NUL after the first buffer: earlier matches are printed as text
+{
+	echo "match early"
+	seq 1 40000 | sed "s/^/filler line /"
+	printf 'late\0binary\nmatch late\n'
+} > binlate.bin
+t "binary late"		$'binlate.bin:match early\nBinary file binlate.bin matches' \
+						'"$D" match binlate.bin'
+mkdir -p tree2/sub
+cp bin1.bin tree2/sub/
+printf 'match text\n' > tree2/text.txt
+t "binary -r"		"Binary file tree2${S}sub${S}bin1.bin matches
+tree2${S}text.txt:match text"				'"$D" -r match tree2'
+
 s "status match"	0	'"$D" apple a.txt'
 s "status no match"	1	'"$D" kiwi a.txt'
 s "status syntax error"	2	'"$D" "a(b" a.txt'
