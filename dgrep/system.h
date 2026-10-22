@@ -13,6 +13,7 @@
  *		  displaying. Debug can be set to TRUE with -D option.
  *	NOFAST	- Uses state indexes instead of state pointers in the dfa
  *		  transition tables. Uses less memory, but is slower.
+ *	NOSIMD	- Does not use SSE2 for literal search and line counting.
  *	INITBUF	- Initial size of the input buffer, default 256 kB. A tiny
  *		  buffer is useful for testing buffer boundary handling.
  *	MAXBUF	- Maximum size of the input buffer (longest line), default
@@ -80,6 +81,12 @@
 
 #ifndef NOFAST
 #define FAST
+#endif
+
+/* SSE2 is in every x86-64 CPU; -DNOSIMD disables it */
+#if !defined(NOSIMD) && (defined(__SSE2__) || defined(_M_X64) \
+			 || (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
+#define USE_SSE2
 #endif
 
 /*

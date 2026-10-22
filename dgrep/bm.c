@@ -22,9 +22,7 @@
 #include "dfa.h"
 #include "bm.h"
 
-/* SSE2 is in every x86-64 CPU; -DNOSIMD disables it */
-#if !defined(NOSIMD) && (defined(__SSE2__) || defined(_M_X64) \
-			 || (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
+#ifdef USE_SSE2
 #define BM_SSE2
 #include <emmintrin.h>
 #ifdef _MSC_VER

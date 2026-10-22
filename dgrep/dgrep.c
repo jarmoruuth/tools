@@ -17,6 +17,9 @@
 #include "bm.h"
 #include "getopt.h"
 #include <threads.h>
+#ifdef USE_SSE2
+#include <emmintrin.h>
+#endif
 
 #define VERSION		"1.75"
 
@@ -80,7 +83,6 @@ typedef struct {
 	char		fullpath[2048];	/* path for -p */
 	ulong		matchcount;
 	ulong		linecount;
-	ulong*		linecount_ptr;	/* &linecount with -n, else NULL */
 	char		fname_shown;	/* block mode file name printed */
 	/* Context printing state. Offsets are file offsets, so they stay
 	   valid when the buffer contents are moved. */
@@ -305,6 +307,39 @@ static bool str_equal(REG1 char* s1, REG2 char* s2, int ignorecase)
 	for (; *s1 && TO_UPPER(*s1) == TO_UPPER(*s2); s1++, s2++)
 		;
 	return *s1 == *s2;
+}
+
+/**********************************************************************
+ *
+ *	count_eol
+ *
+ * Returns the number of EOL2 characters in p .. end-1. With SSE2,
+ * 16 bytes are compared at a time and the matches are added to byte
+ * counters, which are summed every 255 blocks.
+ */
+static ulong count_eol(char* p, char* end)
+{
+	REG1 uchar*	s = (uchar*)p;
+	REG2 uchar*	e = (uchar*)end;
+	ulong		n = 0;
+#ifdef USE_SSE2
+	const __m128i	eol = _mm_set1_epi8(EOL2);
+	const __m128i	zero = _mm_setzero_si128();
+	__m128i		acc;
+	int		i;
+
+	while (e - s >= 16) {
+		acc = zero;
+		for (i = 0; i < 255 && e - s >= 16; i++, s += 16)
+			acc = _mm_sub_epi8(acc, _mm_cmpeq_epi8(
+				_mm_loadu_si128((const __m128i*)s), eol));
+		acc = _mm_sad_epu8(acc, zero);
+		n += (ulong)_mm_cvtsi128_si32(acc) + _mm_extract_epi16(acc, 4);
+	}
+#endif
+	for (; s < e; s++)
+		n += *s == EOL2;
+	return n;
 }
 
 /**********************************************************************
@@ -701,8 +736,9 @@ static int normal_dgrep(REG5 grep_t* gp, char* buf, char* bufend,
  *
  *	fast_dgrep
  *
- * Searches pattern from the whole buffer, and when a match is found, 
- * makes a line from the match position.
+ * Searches pattern from the whole buffer, and when a match is found,
+ * makes a line from the match position. With -n, the lines before
+ * the matching line are counted only when a match is found.
  */
 static int fast_dgrep(REG4 grep_t* gp, char* buf, REG3 char* bufend,
 		      int bufsize)
@@ -712,6 +748,7 @@ static int fast_dgrep(REG4 grep_t* gp, char* buf, REG3 char* bufend,
 	bool		use_must = regmust != NULL;
 	bool		verify;		/* must verify match with dfa */
 	int		nhits = 0;
+	char*		counted = buf;	/* lines before this are counted */
 
 	for (;;) {
 		if (use_must) {
@@ -721,8 +758,7 @@ static int fast_dgrep(REG4 grep_t* gp, char* buf, REG3 char* bufend,
 			    && MUST_TOO_COMMON(matchptr, buf))
 				use_must = FALSE;
 		} else {
-			matchptr = reg_exec(gp->rb, matchptr, bufend,
-					    gp->linecount_ptr);
+			matchptr = reg_exec(gp->rb, matchptr, bufend, NULL);
 			verify = FALSE;
 		}
 		if (matchptr == NULL)
@@ -732,13 +768,21 @@ static int fast_dgrep(REG4 grep_t* gp, char* buf, REG3 char* bufend,
 		matchptr = memchr(matchptr, EOL2, bufend-matchptr);
 		if (matchptr == NULL)
 			matchptr = bufend;
-		if (!verify || reg_exec(gp->rb, linebeg, matchptr, NULL) != NULL)
+		if (!verify || reg_exec(gp->rb, linebeg, matchptr, NULL) != NULL) {
+			if (number) {
+				/* check_flags counts the matching line */
+				gp->linecount += count_eol(counted, linebeg);
+				counted = matchptr + 1;
+			}
 			if (check_flags(gp, linebeg, matchptr) == STOP)
 				return -1;
+		}
 		matchptr++;
 		if (matchptr > bufend)
 			break;
 	}
+	if (number)
+		gp->linecount += count_eol(counted, bufend + 1);
 	return (buf+bufsize)-(bufend+NEOL(bufend));
 }
 
@@ -958,7 +1002,6 @@ static grep_t* grep_new(void)
 	gp->bufsize = min(INITBUF, maxbuf);
 	gp->buffer = alloc_buffer(gp->bufsize);
 	gp->path = "";
-	gp->linecount_ptr = number ? &gp->linecount : NULL;
 	if (!exact) {
 		char eolbuf[2];
 
@@ -1157,8 +1200,11 @@ static int get_args(REG1 int argc, char* argv[])
 					"dgrep -h for help", 2);
 		}
 	}
-	if (count || names || silent || touch)
+	if (count || names || silent || touch) {
+		/* no lines are printed */
 		leading_context = trailing_context = 0;
+		number = FALSE;
+	}
 	if (names || touch || silent) {
 		block_mode = FALSE;
 		verbose = FALSE;
@@ -1258,7 +1304,7 @@ int main(int argc, char* argv[])
 			   && !(ignorecase && IS_ALPHA(*regmust))
 			   ? MUSTGAP_MEMCHR : MUSTGAP_BM;
 	}
-	use_normal = nonmatch || (regmust && number);
+	use_normal = nonmatch;
 	if (touch)
 		touch_time.actime = touch_time.modtime = time(NULL);
 	nfile = argc - optind;
