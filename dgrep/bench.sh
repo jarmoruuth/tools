@@ -19,6 +19,7 @@
 #	BENCH_COLD	if set, drop the file cache before each run
 #			(Linux only, needs sudo without password)
 #	BENCH_ONLY	run only workloads whose name contains this text
+#	BENCH_NOCMP	if set, time only dgrep (not grep, ripgrep or cat)
 #
 # Times are wall clock milliseconds. MB/s is for dgrep.
 #
@@ -151,8 +152,11 @@ nmatches() {
 }
 
 GREP=
-grep --version 2>/dev/null | grep -q GNU && GREP=grep
-RG=$(command -v rg 2>/dev/null)
+RG=
+if [ -z "$BENCH_NOCMP" ]; then
+	grep --version 2>/dev/null | grep -q GNU && GREP=grep
+	RG=$(command -v rg 2>/dev/null)
+fi
 
 # warm the file cache (unless measuring cold)
 cat big.txt $FILES > /dev/null
@@ -203,10 +207,12 @@ printf '%-20s %9s %8s %9s %9s %9s\n' "workload" "dgrep ms" "MB/s" "grep ms" "rg 
 printf '%-20s %9s %8s %9s %9s %9s\n' "--------" "--------" "----" "-------" "-----" "---------"
 
 # cat output can go to /dev/null, only reading is measured
-t=$(OUT=/dev/null best_ms cat big.txt)
-printf '%-20s %9s %8s\n' "cat big.txt" "$t" "$(( t > 0 ? BIGMB * 1000 / t : 0 ))"
-t=$(OUT=/dev/null best_ms cat $FILES)
-printf '%-20s %9s %8s\n' "cat files" "$t" "$(( t > 0 ? FILESMB * 1000 / t : 0 ))"
+if [ -z "$BENCH_NOCMP" ]; then
+	t=$(OUT=/dev/null best_ms cat big.txt)
+	printf '%-20s %9s %8s\n' "cat big.txt" "$t" "$(( t > 0 ? BIGMB * 1000 / t : 0 ))"
+	t=$(OUT=/dev/null best_ms cat $FILES)
+	printf '%-20s %9s %8s\n' "cat files" "$t" "$(( t > 0 ? FILESMB * 1000 / t : 0 ))"
+fi
 
 echo "$WORKLOADS" | while IFS=';' read -r name opts pat target dopts; do
 	[ -z "$name" ] && continue

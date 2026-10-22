@@ -11,7 +11,9 @@
 ######################################################################
 
 CC	= cl
-CFLAGS	= -nologo -O2 -W3 -std:c11
+# -GL and -LTCG: whole program (link time) optimization, 6-10% faster
+CFLAGS	= -nologo -O2 -GL -W3 -std:c11
+LFLAGS	= -link -LTCG
 
 DFASRC	= dfaregex.c dfa.c calcpos.c dfatree.c regmust.c set.c clib.c getopt.c
 DGREPSRC = dgrep.c bm.c walk.c $(DFASRC)
@@ -28,15 +30,15 @@ WILDARG	= setargv.obj
 all: dgrep.exe try.exe
 
 dgrep.exe: $(DGREPOBJ)
-	$(CC) $(CFLAGS) -Fedgrep.exe $(DGREPOBJ) $(WILDARG)
+	$(CC) $(CFLAGS) -Fedgrep.exe $(DGREPOBJ) $(WILDARG) $(LFLAGS)
 
 try.exe: $(TRYOBJ)
-	$(CC) $(CFLAGS) -Fetry.exe $(TRYOBJ)
+	$(CC) $(CFLAGS) -Fetry.exe $(TRYOBJ) $(LFLAGS)
 
 # dgrep with a tiny input buffer for testing buffer boundaries
 dgrep-smallbuf.exe: $(DGREPSRC) $(HEADERS)
 	if not exist smallbuf mkdir smallbuf
-	$(CC) $(CFLAGS) -DINITBUF=256 -Fosmallbuf\ -Fedgrep-smallbuf.exe $(DGREPSRC) $(WILDARG)
+	$(CC) $(CFLAGS) -DINITBUF=256 -Fosmallbuf\ -Fedgrep-smallbuf.exe $(DGREPSRC) $(WILDARG) $(LFLAGS)
 
 $(DGREPOBJ) try.obj: $(HEADERS)
 
