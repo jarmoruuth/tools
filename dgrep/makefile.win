@@ -11,7 +11,7 @@
 ######################################################################
 
 CC	= cl
-CFLAGS	= -nologo -O2 -W3
+CFLAGS	= -nologo -O2 -W3 -std:c11
 
 DFASRC	= dfaregex.c dfa.c calcpos.c dfatree.c regmust.c set.c clib.c getopt.c
 DGREPSRC = dgrep.c bm.c $(DFASRC)

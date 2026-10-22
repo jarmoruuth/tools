@@ -29,12 +29,14 @@ Options: -An  n lines after the matching line are printed
          -i   case insensitive match
          -l   only names of files with matching lines are printed
          -n   each line is preceded by its relative line number in file
+         -p   filename is printed with full path
          -s   silent mode, nothing is printed except error messages
          -t   all files that contain matches are touched
          -v   all lines but those matching are printed
          -x   exact, all characters in expression are taken literally
          -z   verbose
          -1-9 1-9 lines before and after the matching line are printed
+         -jn  n threads grep files in parallel (default CPUs, at most 16)
          -e expression, useful when expression begins with -
          -f file that contains expression
 Regular expressions:                    .       any single character

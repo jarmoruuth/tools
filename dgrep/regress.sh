@@ -276,6 +276,38 @@ if [ -n "$SMALL" ]; then
 fi
 
 ######################################################################
+# Parallel grepping: the output with many threads must be the same as
+# with one thread, in the order of the files. The files have different
+# sizes, so they finish in a different order than they start.
+
+mkdir -p par
+for i in $(seq 1 200); do
+	n=$(( (i * 37) % 23 ))
+	if [ $((i % 3)) -eq 0 ]; then
+		head -c $((n * 2000)) big.txt
+	else
+		head -c $((n * 20)) big.txt
+	fi > par/f$i.txt
+done
+PAR=$(for i in $(seq 1 200); do printf 'par/f%d.txt ' $i; done)
+for opts in "" "-n -1" "-c" "-l" "-b -A2" "-z -B1" "-v -c" "-n -i"; do
+	"$D" -j1 $opts "m.tch|line 1" $PAR 2>&1 | tr -d '\r' > exp.out
+	for run in 1 2 3; do
+		"$D" -j8 $opts "m.tch|line 1" $PAR 2>&1 | tr -d '\r' > act.out
+		if cmp -s exp.out act.out; then
+			pass
+		else
+			fail "parallel: dgrep -j8 $opts (run $run)" \
+				"$(diff exp.out act.out | head -6 | tr '\n' '|')"
+		fi
+	done
+done
+s "parallel status"	0	'"$D" -j8 -s "line 77 " $PAR'
+s "parallel no match"	1	'"$D" -j8 -s Ruuthian $PAR'
+s "parallel missing"	2	'"$D" -j8 -s match no-such-file.txt $PAR'
+s "bad -j"		2	'"$D" -j0 match a.txt'
+
+######################################################################
 # Regular expression engine tests (see tryall.sh)
 
 if [ -n "$TRY" ]; then

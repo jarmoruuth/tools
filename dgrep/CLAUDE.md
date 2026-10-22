@@ -58,12 +58,19 @@ references, exit codes, portability).
 | `regress.sh` | Regression tests for the whole program (see Testing) |
 | `innerloo.*`, `stat`, `*.opt` | Old notes: assembly listings of the inner loops, timing statistics |
 
-State for multithreading: options and the search setup (`bm_t`, `regmust`,
-`expr`) are globals that are only read after `main` sets them up. Everything
-that changes while grepping a file is in a `grep_t` (`dgrep.c`): its own
-`regbuf_t` (the lazy DFA writes to it while matching), input buffer, line
-counters, context state and output buffer (`out_mem`/`out_flush`). Compiling
-an expression (`dfatree.c`) is not reentrant; do it on one thread.
+Threads: files are grepped in parallel (`-j`, default CPU count, at most
+16) with C11 `<threads.h>` (MSVC needs `-std:c11`; POSIX builds use
+`-pthread`). Options and the search setup (`bm_t`, `regmust`, `expr`) are
+globals that are only read after `main` sets them up. Everything that changes
+while grepping a file is in a `grep_t` (`dgrep.c`), one per thread: its own
+`regbuf_t` (the lazy DFA writes to it while matching), input buffer (starts at
+256 kB, grows for long lines), line counters, context state and output
+(`out_t`). Output is written in file order: `out_flush` writes only when it is
+the file's turn (`out_turn`), finished output waits in `done`, and `lock`
+protects these and stdout. Compiling an expression (`dfatree.c`) is not
+reentrant, so all `grep_t`s are created before the threads start. GCC 13
+ThreadSanitizer does not support glibc `thrd_create`; to check for races, build
+with a test-only `threads.h` that maps the C11 calls to pthreads.
 
 The code has no dependencies outside this directory (the old `..\lib` is not
 used). Case conversion is ASCII-only on purpose, so bytes of UTF-8

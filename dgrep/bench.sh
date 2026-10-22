@@ -158,7 +158,7 @@ RG=$(command -v rg 2>/dev/null)
 cat big.txt $FILES > /dev/null
 
 ######################################################################
-# Workloads: name ; dgrep/grep options ; pattern ; target
+# Workloads: name ; dgrep/grep options ; pattern ; target [; dgrep only options]
 #
 #	literal-*	Boyer-Moore search
 #	regmust-*	Boyer-Moore for the must-match string, then dfa
@@ -168,6 +168,9 @@ cat big.txt $FILES > /dev/null
 #	dfa-states	needs about 256 dfa states, more than the dfa
 #			cache (NTRAN) holds
 #	print-*		output of many lines (to a file)
+#	files-*		1000 files, dgrep with the default threads;
+#			files-*-j1 with one thread (rg -j1 is in its own
+#			column)
 
 WORKLOADS="
 literal-rare;-c;Ruuthian;big
@@ -185,7 +188,11 @@ dfa-states;-c;a.......b;big
 line-numbers;-c -n;alpha[0-9]+x;big
 print-lines;-n;alpha[0-9]+x;big
 files-literal;-c;Ruuthian;files
+files-literal-j1;-c;Ruuthian;files;-j1
 files-regex;-c;(alpha|beta)[0-9]+x;files
+files-regex-j1;-c;(alpha|beta)[0-9]+x;files;-j1
+files-dfa;-c;(alpha|beta|gamma)[0-9];files
+files-dfa-j1;-c;(alpha|beta|gamma)[0-9];files;-j1
 "
 
 printf '\ndgrep benchmark on %s, %s CPUs\n' "$(uname -s)" "$(nproc 2>/dev/null || echo ?)"
@@ -201,7 +208,7 @@ printf '%-20s %9s %8s\n' "cat big.txt" "$t" "$(( t > 0 ? BIGMB * 1000 / t : 0 ))
 t=$(OUT=/dev/null best_ms cat $FILES)
 printf '%-20s %9s %8s\n' "cat files" "$t" "$(( t > 0 ? FILESMB * 1000 / t : 0 ))"
 
-echo "$WORKLOADS" | while IFS=';' read -r name opts pat target; do
+echo "$WORKLOADS" | while IFS=';' read -r name opts pat target dopts; do
 	[ -z "$name" ] && continue
 	case "$name" in *"$BENCH_ONLY"*) ;; *) continue ;; esac
 	if [ "$target" = big ]; then
@@ -211,13 +218,13 @@ echo "$WORKLOADS" | while IFS=';' read -r name opts pat target; do
 		args=$FILES
 		size=$FILESMB
 	fi
-	td=$(best_ms "$D" $opts "$pat" $args)
+	td=$(best_ms "$D" $dopts $opts "$pat" $args)
 	tg=-
 	check=
 	if [ -n "$GREP" ]; then
 		tg=$(best_ms grep -E $opts "$pat" $args)
 		# check that dgrep finds the same lines as grep
-		if [ "$(nmatches "$D" $opts "$pat" $args)" = \
+		if [ "$(nmatches "$D" $dopts $opts "$pat" $args)" = \
 		     "$(nmatches grep -E $opts "$pat" $args)" ]; then
 			check=ok
 		else

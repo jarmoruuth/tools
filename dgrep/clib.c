@@ -7,6 +7,12 @@
 
 #include "system.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 unsigned	maxbuf = MAXBUF;	/* input buffer size */
 
 /**********************************************************************
@@ -37,6 +43,26 @@ uchar* alloc_buffer(unsigned size)
 	if (buffer == NULL)
 		error("Out of memory when allocating input buffer", 3);
 	return buffer;
+}
+
+/**********************************************************************
+ *
+ *	cpu_count
+ *
+ * Returns the number of CPUs.
+ */
+int cpu_count(void)
+{
+#ifdef _WIN32
+	SYSTEM_INFO	si;
+
+	GetSystemInfo(&si);
+	return si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1;
+#else
+	long	n = sysconf(_SC_NPROCESSORS_ONLN);
+
+	return n > 0 ? (int)n : 1;
+#endif
 }
 
 /**********************************************************************

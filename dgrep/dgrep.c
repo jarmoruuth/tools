@@ -16,6 +16,7 @@
 #include "dfaregex.h"
 #include "bm.h"
 #include "getopt.h"
+#include <threads.h>
 
 #define VERSION		"1.75"
 
@@ -52,6 +53,21 @@ static int		leading_context	= 0;
 static int		trailing_context= 0;
 
 /*
+	Output of one file. It is collected in memory and written in the
+	order of the files, see out_flush.
+*/
+typedef struct {
+	char*		buf;
+	size_t		len;
+	size_t		size;
+	size_t		flush_at;	/* try to write when len reaches this */
+	char		sep_before;	/* separator before output if earlier
+					   files printed context groups */
+	char		groups;		/* context groups printed */
+	char		finished;	/* file is grepped, output complete */
+} out_t;
+
+/*
 	State of grepping one file. All functions that grep a file get
 	a grep_t* gp parameter, and the OFFSET and BUFPTR macros use it.
 	There will be one grep_t for each thread.
@@ -72,13 +88,8 @@ typedef struct {
 	long long	printed_offset;	/* offset after last printed line, -1 if none */
 	int		trailing_left;	/* trailing context lines to print */
 	ulong		trailing_lineno;/* line number of next trailing line */
-	char		sep_before;	/* separator before output if earlier
-					   files printed context groups */
-	char		groups;		/* context groups printed */
-	/* Output is collected here and written with out_flush */
-	char*		out;
-	size_t		outlen;
-	size_t		outsize;
+	int		fileidx;	/* index of the file in files, -1 for stdin */
+	out_t		out;		/* output of the file */
 	/* results */
 	char		was_match;
 	char		file_not_found;
@@ -113,7 +124,23 @@ static int		regmustlen;
 static char		use_normal;
 static struct utimbuf	touch_time;	/* time for -t */
 
-/* Output state */
+/*
+	Grepping files in parallel. Each thread has its own grep_t and
+	takes the next file from files. Output of a file is written only
+	when all earlier files are written (out_turn); finished output that
+	must wait is kept in done. The lock protects next_file, out_turn,
+	done, groups_printed and writing to stdout.
+*/
+#define MAXTHREADS	64	/* most threads with -j */
+#define DEFTHREADS	16	/* most threads by default */
+
+static int		nthreads	= 0;	/* -j, 0 = default */
+static char**		files;		/* files to grep */
+static int		nfiles;
+static int		next_file	= 0;	/* next file to grep */
+static int		out_turn	= 0;	/* file whose output is written */
+static out_t*		done;		/* finished output waiting for turn */
+static mtx_t		lock;
 static char		groups_printed	= FALSE; /* context groups written */
 
 /* By default, use time() as a random number generator */
@@ -183,6 +210,7 @@ static char* options2 = {
       "\t -x   exact, all characters in expression are taken literally\n"
       "\t -z   verbose\n"
       "\t -1-9 1-9 lines before and after the matching line are printed\n"
+      "\t -jn  n threads grep files in parallel (default CPUs, at most 16)\n"
       "\t -e expression, useful when expression begins with -\n"
       "\t -f file that contains expression\n"
 };
@@ -298,40 +326,108 @@ static char* d_memrchr(REG1 char* b, REG3 char c, REG2 unsigned n)
  *
  * Adds len bytes to the output of gp.
  */
-static void out_mem(REG1 grep_t* gp, const char* s, size_t len)
+static void out_mem(grep_t* gp, const char* s, size_t len)
 {
-	if (gp->outlen + len > gp->outsize) {
-		size_t	size = max(2 * gp->outsize, gp->outlen + len);
+	REG1 out_t*	o = &gp->out;
 
-		if ((gp->out = realloc(gp->out, size)) == NULL)
+	if (o->len + len > o->size) {
+		size_t	size = max(2 * o->size, o->len + len);
+
+		if ((o->buf = realloc(o->buf, size)) == NULL)
 			error("Out of memory", 3);
-		gp->outsize = size;
+		o->size = size;
 	}
-	memcpy(gp->out + gp->outlen, s, len);
-	gp->outlen += len;
+	memcpy(o->buf + o->len, s, len);
+	o->len += len;
 }
 
 #define out_str(gp, s)	out_mem((gp), (s), strlen(s))
 
 /**********************************************************************
  *
+ *	out_begin
+ *
+ * Starts the output of a new file.
+ */
+static void out_begin(grep_t* gp, int fileidx)
+{
+	gp->fileidx = fileidx;
+	gp->out.len = 0;
+	gp->out.flush_at = OUTFLUSH;
+	gp->out.sep_before = FALSE;
+	gp->out.groups = FALSE;
+	gp->out.finished = FALSE;
+}
+
+/**********************************************************************
+ *
+ *	out_write
+ *
+ * Writes output o to stdout. If the output starts with a context
+ * group and the earlier output had groups, a separator is written
+ * first. With several files, lock must be held and it must be the
+ * turn of the file of o.
+ */
+static void out_write(REG1 out_t* o)
+{
+	if (o->sep_before) {
+		if (groups_printed)
+			fputs("----------\n", stdout);
+		o->sep_before = FALSE;
+	}
+	if (o->groups)
+		groups_printed = TRUE;
+	fwrite(o->buf, 1, o->len, stdout);
+	o->len = 0;
+	o->flush_at = OUTFLUSH;
+}
+
+/**********************************************************************
+ *
  *	out_flush
  *
- * Writes the output collected in gp. If the output starts with a
- * context group and the earlier output had groups, a separator is
- * written first.
+ * Writes the output collected so far, if it is the turn of the file.
+ * Otherwise the output is kept, and we try again after OUTFLUSH more
+ * bytes.
  */
 static void out_flush(grep_t* gp)
 {
-	if (gp->sep_before) {
-		if (groups_printed)
-			fputs("----------\n", stdout);
-		gp->sep_before = FALSE;
+	if (gp->fileidx < 0) {
+		out_write(&gp->out);
+		return;
 	}
-	if (gp->groups)
-		groups_printed = TRUE;
-	fwrite(gp->out, 1, gp->outlen, stdout);
-	gp->outlen = 0;
+	mtx_lock(&lock);
+	if (gp->fileidx == out_turn)
+		out_write(&gp->out);
+	else
+		gp->out.flush_at = gp->out.len + OUTFLUSH;
+	mtx_unlock(&lock);
+}
+
+/**********************************************************************
+ *
+ *	out_file_done
+ *
+ * Called when the file of gp is grepped. If it is the turn of the file,
+ * writes its output and the waiting output of the following files that
+ * are finished. Otherwise moves the output to done to wait.
+ */
+static void out_file_done(grep_t* gp)
+{
+	mtx_lock(&lock);
+	if (gp->fileidx == out_turn) {
+		out_write(&gp->out);
+		for (out_turn++; out_turn < nfiles && done[out_turn].finished;
+		     out_turn++) {
+			out_write(&done[out_turn]);
+			d_free(&done[out_turn].buf);
+		}
+	} else {
+		done[gp->fileidx] = gp->out;
+		done[gp->fileidx].finished = TRUE;
+		memset(&gp->out, 0, sizeof(gp->out));
+	}
+	mtx_unlock(&lock);
 }
 
 /**********************************************************************
@@ -382,7 +478,7 @@ static void print_line(REG2 grep_t* gp, char* beg, REG1 char* end, ulong lineno)
 		out_mem(gp, ":", 1);
 	out_mem(gp, beg, end - beg);
 	out_mem(gp, "\n", 1);
-	if (gp->outlen >= OUTFLUSH)
+	if (gp->out.len >= gp->out.flush_at)
 		out_flush(gp);
 }
 
@@ -507,8 +603,8 @@ static void print_match(REG1 grep_t* gp, char* beg, char* end)
 		if (OFFSET(ctxbeg) != gp->printed_offset)
 			out_str(gp, "----------\n");
 	} else if (show_fname != BLOCK)
-		gp->sep_before = TRUE;
-	gp->groups = TRUE;
+		gp->out.sep_before = TRUE;
+	gp->out.groups = TRUE;
 	print_context(gp, ctxbeg, beg - 1, nlines, gp->linecount - nlines,
 		&ctxbeg);
 	print_line(gp, beg, end, gp->linecount);
@@ -744,8 +840,6 @@ static void dgrep(REG4 grep_t* gp, int h)
 	gp->buf_offset = 0;
 	gp->printed_offset = -1;
 	gp->trailing_left = 0;
-	gp->sep_before = FALSE;
-	gp->groups = FALSE;
 	if (verbose && show_fname != NONE) {
 		out_str(gp, "*** File ");
 		out_str(gp, gp->path);
@@ -813,7 +907,6 @@ static void dgrep(REG4 grep_t* gp, int h)
 		show_number(gp, gp->matchcount);
 		out_mem(gp, "\n", 1);
 	}
-	out_flush(gp);
 }
 
 /**********************************************************************
@@ -881,6 +974,69 @@ static grep_t* grep_new(void)
 
 /**********************************************************************
  *
+ *	worker
+ *
+ * Greps the next file from files until there are no more files.
+ */
+static int worker(void* arg)
+{
+	grep_t*	gp = arg;
+	int	i;
+
+	for (;;) {
+		mtx_lock(&lock);
+		i = next_file++;
+		mtx_unlock(&lock);
+		if (i >= nfiles)
+			break;
+		out_begin(gp, i);
+		dgrep_file(gp, files[i]);
+		out_file_done(gp);
+	}
+	return 0;
+}
+
+/**********************************************************************
+ *
+ *	grep_files
+ *
+ * Greps n files in parallel threads. The calling thread is one of
+ * them and uses gp. The results of all threads are combined to gp.
+ */
+static void grep_files(grep_t* gp, char** names, int n)
+{
+	grep_t*	gps[MAXTHREADS];
+	thrd_t	threads[MAXTHREADS];
+	int	nthr;
+	int	i;
+
+	files = names;
+	nfiles = n;
+	if ((done = calloc(n, sizeof(out_t))) == NULL)
+		error("Out of memory", 3);
+	if (mtx_init(&lock, mtx_plain) != thrd_success)
+		error("Can't create mutex", 3);
+	nthr = nthreads > 0 ? nthreads : min(cpu_count(), DEFTHREADS);
+	nthr = min(nthr, n);
+	/* compile the expressions before starting threads, because
+	   compiling is not reentrant */
+	gps[0] = gp;
+	for (i = 1; i < nthr; i++)
+		gps[i] = grep_new();
+	for (i = 1; i < nthr; i++)
+		if (thrd_create(&threads[i], worker, gps[i]) != thrd_success)
+			error("Can't create thread", 3);
+	worker(gp);
+	for (i = 1; i < nthr; i++) {
+		thrd_join(threads[i], NULL);
+		gp->was_match |= gps[i]->was_match;
+		gp->file_not_found |= gps[i]->file_not_found;
+		gp->touch_failed |= gps[i]->touch_failed;
+	}
+}
+
+/**********************************************************************
+ *
  *	read_exp
  *
  * Reads an expression from a file.
@@ -920,8 +1076,14 @@ static int get_args(REG1 int argc, char* argv[])
 	REG2 int	opt;
 
 	d_opterr = FALSE;	/* handle errors ourselves */
-	while ((opt = d_getopt(argc, argv, "bdchilnoprstvxz123456789A:B:e:f:D")) != EOF) {
+	while ((opt = d_getopt(argc, argv, "bdchilnoprstvxz123456789A:B:e:f:j:D")) != EOF) {
 		switch (opt) {
+			case 'j':
+				nthreads = atoi(d_optarg);
+				if (nthreads < 1 || nthreads > MAXTHREADS)
+					error("Number of threads must be "
+					      "1-64", 2);
+				break;
 			case 'A':
 				trailing_context = (unsigned)atoi(d_optarg);
 				break;
@@ -1105,10 +1267,13 @@ int main(int argc, char* argv[])
 			show_fname = BLOCK;
 		else
 			show_fname = BEFORE_LINE;
-		while (optind < argc)
-			dgrep_file(gp, argv[optind++]);
-	} else
+		grep_files(gp, &argv[optind], nfile);
+	} else {
+		out_begin(gp, -1);
 		dgrep(gp, fileno(stdin));
+		out_flush(gp);
+	}
+	fflush(stdout);
 #ifdef TEST
 	if (debug) {
 		printf("maxbuf = %d\n", maxbuf);

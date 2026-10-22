@@ -10,7 +10,7 @@
 ######################################################################
 
 CC	= cc
-CFLAGS	= -O2 -Wall
+CFLAGS	= -O2 -Wall -pthread
 
 DFASRC	= dfaregex.c dfa.c calcpos.c dfatree.c regmust.c set.c clib.c getopt.c
 DGREPSRC = dgrep.c bm.c $(DFASRC)

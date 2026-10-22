@@ -138,6 +138,7 @@ typedef unsigned long	ulong;
 extern void  d_free(void* ptr);
 extern void  error(char* errmsg, int exit_value);
 extern uchar* alloc_buffer(unsigned size);
+extern int    cpu_count(void);
 
 extern unsigned	maxbuf;	/* maximum input buffer size */
 
