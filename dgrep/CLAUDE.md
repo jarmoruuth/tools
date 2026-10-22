@@ -102,6 +102,15 @@ all platforms; `bm_d012.c` is an alternative with the same interface.
 
 Run the tests after every change; the exit status is the number of failures.
 
+## Benchmark
+
+`bash bench.sh dgrep` (`make bench`) generates test data (a 200 MB file and
+1000 small files) in `$BENCH_DIR` and times dgrep, GNU grep, ripgrep and
+`cat` (read cost only). The last column checks that dgrep and grep find
+the same number of lines. Output goes to a file, not `/dev/null`, because
+GNU grep stops at the first match when writing to `/dev/null`. In WSL keep
+`BENCH_DIR` on the Linux filesystem, not under `/mnt/c`.
+
 ## Exit codes
 
 0 = match found, 1 = no match, 2 = syntax error or inaccessible file,

@@ -5,6 +5,7 @@
 #
 #	make		builds dgrep and try
 #	make test	builds also dgrep-smallbuf and runs regress.sh
+#	make bench	runs bench.sh
 #
 ######################################################################
 
@@ -39,7 +40,10 @@ $(DGREPOBJ) try.o: $(HEADERS)
 test: dgrep try dgrep-smallbuf
 	bash regress.sh ./dgrep ./try ./dgrep-smallbuf
 
+bench: dgrep
+	bash bench.sh ./dgrep
+
 clean:
 	rm -f *.o dgrep try dgrep-smallbuf
 
-.PHONY: all test clean
+.PHONY: all test bench clean

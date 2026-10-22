@@ -6,6 +6,7 @@
 #	nmake -f makefile.win		builds dgrep.exe and try.exe
 #	nmake -f makefile.win test	builds also dgrep-smallbuf.exe and
 #					runs regress.sh (needs Git Bash)
+#	nmake -f makefile.win bench	runs bench.sh (needs Git Bash)
 #
 ######################################################################
 
@@ -44,6 +45,9 @@ $(DGREPOBJ) try.obj: $(HEADERS)
 
 test: dgrep.exe try.exe dgrep-smallbuf.exe
 	bash regress.sh dgrep.exe try.exe dgrep-smallbuf.exe
+
+bench: dgrep.exe
+	bash bench.sh dgrep.exe
 
 clean:
 	-del *.obj dgrep.exe try.exe dgrep-smallbuf.exe 2>nul
