@@ -87,6 +87,7 @@ static char		first_match	= TRUE;
 static char*		path		= "";	/* current path and filename */
 static char*		expr		= NULL;
 static regbuf_t*	rb;		/* compiled expression */
+static bm_t*		bm;		/* Boyer-Moore tables for regmust */
 static char*		regmust	= NULL;
 static char     fullpath[2048];
 static int		regmustlen;
@@ -492,7 +493,7 @@ static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
 
 	while ((le = memchr(line, EOL2, bufsize)) != NULL) {
 		if (use_must) {
-			match = boyer_moore(line,le,regmust,regmustlen);
+			match = boyer_moore(bm, line, le);
 			if (match != NULL && !regmust_only) {
 				match = reg_exec(rb, line, le, NULL);
 				if (++nhits == MUSTCHECK && MUST_TOO_COMMON(line, buf))
@@ -530,7 +531,7 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 
 	for (;;) {
 		if (use_must) {
-			matchptr = boyer_moore(matchptr,bufend,regmust,regmustlen);
+			matchptr = boyer_moore(bm, matchptr, bufend);
 			verify = !regmust_only;
 			if (verify && ++nhits == MUSTCHECK && matchptr != NULL
 			    && MUST_TOO_COMMON(matchptr, buf))
@@ -942,7 +943,7 @@ int main(int argc, char* argv[])
 		}
 		regmust_only = (strcmp(regmust,expr) == 0);
 		regmustlen = strlen(regmust);
-		gosper(regmust, regmustlen, ignorecase);
+		bm = gosper(regmust, regmustlen, ignorecase);
 		/* boyer_moore uses memchr for one character */
 		must_gap = regmustlen == 1
 			   && !(ignorecase && IS_ALPHA(*regmust))
@@ -963,7 +964,7 @@ int main(int argc, char* argv[])
 	if (debug) {
 		printf("maxbuf = %d\n", maxbuf);
 		show_dfa_report(rb);
-		show_boyer_moore_report();
+		show_boyer_moore_report(bm);
 		fflush(stdout);
 	}
 #endif

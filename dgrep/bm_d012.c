@@ -35,30 +35,34 @@
 
 #include "system.h"
 #include "dfa.h"
+#include "bm.h"
 
-/* large should be larger than or equal to strlen + patlen */
-static unsigned 	large;
-
-/* Boyer-Moore algorithm core */
-static unsigned	delta0[NCHARS];
-static unsigned	delta1[NCHARS];
-static unsigned	*delta2;
-
-/* Character conversion table, in case sensitive search, gives uppercase */
-/* version of given character, otherwise just the same character. */
-static uchar ccase[NCHARS];
+struct bm_st {
+	uchar*		pat;		/* pattern */
+	int		patlen;		/* pattern length */
+	/* large should be larger than or equal to strlen + patlen */
+	unsigned	large;
+	/* Boyer-Moore algorithm core */
+	unsigned	delta0[NCHARS];
+	unsigned	delta1[NCHARS];
+	unsigned*	delta2;
+	/* Character conversion table, in case sensitive search, gives
+	   uppercase version of given character, otherwise just the same
+	   character. */
+	uchar		ccase[NCHARS];
+};
 
 #ifdef TEST
 extern int	debug;
+/* statistics, not thread safe */
 static long inner_cnt, outer_cnt, cmp_cnt;
-static int plen;
 
-void show_boyer_moore_report()
+void show_boyer_moore_report(const bm_t* bm)
 {
-	if (debug > 1) {
+	if (debug > 1 && bm != NULL) {
 		int i;
-		for (i=0; i < plen; i++) {
-			printf("delta2[%d] = %d\n", i, delta2[i]);
+		for (i=0; i < bm->patlen; i++) {
+			printf("delta2[%d] = %d\n", i, bm->delta2[i]);
 		}
 	}
 	printf( "Boyer-Moore inner loop iterated "
@@ -70,15 +74,15 @@ void show_boyer_moore_report()
 /**********************************************************************
  *	make_ccase
  */
-static void make_ccase (int iflag)
+static void make_ccase (bm_t* bm, int iflag)
 {
 	REG1 int	i = NCHARS;
-	
+
 	while (i--) {
 		if (iflag && IS_LOWER(i))
-			ccase[i] = TO_UPPER(i);
+			bm->ccase[i] = TO_UPPER(i);
 		else
-			ccase[i] = i;
+			bm->ccase[i] = i;
 	}
 }
 
@@ -87,14 +91,14 @@ static void make_ccase (int iflag)
  *
  * D.Knuth's linear algorithm to build dd' (delta2).
  */
-static void build_delta2 (REG4 char *pat, int patlen)
+static void build_delta2 (bm_t* bm, REG4 char *pat, int patlen)
 {
 	REG1 int	j;
 	REG2 int	t;
 	REG3 int	*f;
-	
-	d_free(&delta2);
-	delta2 = malloc((unsigned)patlen * sizeof(unsigned));
+	unsigned*	delta2;
+
+	delta2 = bm->delta2 = malloc((unsigned)patlen * sizeof(unsigned));
 	if (delta2 == NULL)
 		error("Out of memory", 3);
 	f = malloc(patlen * sizeof(int));
@@ -121,38 +125,55 @@ static void build_delta2 (REG4 char *pat, int patlen)
  *	gosper
  *
  * Computes "Boyer-Moore" delta table -- puts skip distance in delta0[],
- * delta1[] and delta2[].
+ * delta1[] and delta2[]. The pattern is not copied, it must exist as
+ * long as the returned bm_t is used.
  */
-void gosper(uchar *pattern, int len, int iflag)
+bm_t* gosper(char *pat, int len, int iflag)
 {						/* ... HAKMEM lives ... */
 	REG1 int j;
 	REG2 int c;
+	REG3 uchar* pattern = (uchar*)pat;
+	REG4 bm_t* bm;
 
+	if ((bm = calloc(1, sizeof(bm_t))) == NULL)
+		error("Out of memory", 3);
+	bm->pat = pattern;
+	bm->patlen = len;
 #ifdef	TEST
 	inner_cnt = outer_cnt = cmp_cnt = 0L;
-	plen = len;
 #endif
-	make_ccase(iflag);
-	build_delta2(pattern, len);
-	large =  MAXBUF + MAXREGMUST;
+	make_ccase(bm, iflag);
+	build_delta2(bm, pat, len);
+	bm->large =  MAXBUF + MAXREGMUST;
 	/* For chars that aren't in string, skip by string length. */
 	for (j = NCHARS; j--; )
-		delta1[j] = len;
+		bm->delta1[j] = len;
 	/* For chars in a string, skip distance from char to end of string. */
 	/* (If char appears more than once, skip minimum distance.) */
 	for (j = 0, --len; j <= len; ++j) {
-		delta1[c = pattern[j]] = len - j;
+		bm->delta1[c = pattern[j]] = len - j;
 		if (iflag)		/* same skip with both cases */
-			delta1[CHCASE(c)] = delta1[c];
+			bm->delta1[CHCASE(c)] = bm->delta1[c];
 	}
 	for (c = NCHARS; c--; )
-		delta0[c] = delta1[c];
+		bm->delta0[c] = bm->delta1[c];
 	/* For last char, fall out of search loop. */
-	delta0[c = pattern[j-1]] = large;
+	bm->delta0[c = pattern[j-1]] = bm->large;
 	if (iflag)
-		delta0[CHCASE(c)] = delta0[c];
+		bm->delta0[CHCASE(c)] = bm->delta0[c];
+	return bm;
 }
 
+/**********************************************************************
+ *	bm_free
+ */
+void bm_free(bm_t* bm)
+{
+	if (bm != NULL) {
+		d_free(&bm->delta2);
+		free(bm);
+	}
+}
 
 /**********************************************************************
  *	boyer_moore
@@ -160,28 +181,34 @@ void gosper(uchar *pattern, int len, int iflag)
  * "reach out and boyer-moore search someone"
  *  soon-to-be-popular bumper sticker
  */
-char *boyer_moore(uchar *str, uchar *se, REG6 uchar *pat, int patlen)
+char *boyer_moore(const bm_t* bm, char *str, char *se)
 {
 	REG1 uchar	*k;
-	REG2 uchar	*strend = se;
+	REG2 uchar	*strend = (uchar*)se;
 	REG3 unsigned	delta1_jmp;
 	REG4 unsigned	delta2_jmp;
 	REG5 uchar	*s;
+	/* table pointers in local variables keep the loops tight */
+	REG6 const unsigned* delta0 = bm->delta0;
+	const uchar*	ccase = bm->ccase;
+	uchar*		pat = bm->pat;
+	int		patlen = bm->patlen;
+	unsigned	large = bm->large;
 
 	/* The variables below exist merely for optimization purposes
 	** to avoid calculations inside the outermost for loop.
 	** They don't really affect the overall performance significantly,
 	** though.
 	*/
-	uchar	*str_plus_large = str + large;
+	uchar	*str_plus_large = (uchar*)str + large;
 	uchar	*pat_plus_patlen_minus_1 = pat + patlen - 1;
-	
+
 	/* memchr can't ignore case */
 	if (patlen == 1 && (!IS_ALPHA(*pat) || ccase['a'] != ccase['A']))
 		return memchr(str, *pat, se-str+1);
-	for (k = str + patlen - 1; ; ) {
-		/* for a large class of patterns, upwards of 80% of 
-		 * match time is spent on the next loop.  We beat 
+	for (k = (uchar*)str + patlen - 1; ; ) {
+		/* for a large class of patterns, upwards of 80% of
+		 * match time is spent on the next loop.  We beat
 		 * existing microcode (vax 'matchc') this way. */
 #ifdef	TEST
 		if (debug)
@@ -206,7 +233,7 @@ char *boyer_moore(uchar *str, uchar *se, REG6 uchar *pat, int patlen)
 				--k;
 				--strend;
 				if (strend < pat)
-					return s - patlen + 1;
+					return (char*)s - patlen + 1;
 			} while (ccase[*k] == *strend);
 		} else
 #endif
@@ -214,19 +241,19 @@ char *boyer_moore(uchar *str, uchar *se, REG6 uchar *pat, int patlen)
 			--k;
 			--strend;
 			if (strend < pat)
-				return s - patlen + 1;
+				return (char*)s - patlen + 1;
 		} while (ccase[*k] == *strend);
 		/* Any optimizing compiler can usually do the below max()
 		   better without temporary variables. */
-		delta1_jmp = delta1[*k];
-		delta2_jmp = delta2[strend-pat];
+		delta1_jmp = bm->delta1[*k];
+		delta2_jmp = bm->delta2[strend-pat];
 		k += max(delta1_jmp, delta2_jmp);
-		strend = se;
+		strend = (uchar*)se;
 #ifdef TEST
 		if (debug > 2)
 			printf("Boyer-moore: max = %d from %s\n",
 				max(delta1_jmp, delta2_jmp),
-				delta1_jmp > delta2_jmp 
+				delta1_jmp > delta2_jmp
 				? "delta1" : "delta2");
 #endif
 	}

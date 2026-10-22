@@ -17,43 +17,46 @@
 #include "dfa.h"
 #include "bm.h"
 
-/* large should be larger than or equal to strlen + patlen */
-static unsigned large;
-
 #if (MAXREGMUST > MAXCHAR)
 typedef	unsigned short	delta1_jmp_t;
 #else
 typedef	unsigned char	delta1_jmp_t;
 #endif
 
-static uchar		c_index[NCHARS];
-static unsigned		n_index;
-static delta1_jmp_t*    delta1[MAXREGMUST-1] /*= {0}*/;
-static unsigned		delta0[NCHARS];  /* Boyer-Moore algorithm core */
-
-/* Character conversion table, in case sensitive search, gives uppercase */
-/* version of given character, otherwise just the same character. */
-static uchar ccase[NCHARS];
+struct bm_st {
+	uchar*		pat;		/* pattern */
+	int		patlen;		/* pattern length */
+	/* large should be larger than or equal to strlen + patlen */
+	unsigned	large;
+	uchar		c_index[NCHARS];
+	unsigned	n_index;
+	delta1_jmp_t*	delta1[MAXREGMUST-1];
+	unsigned	delta0[NCHARS];  /* Boyer-Moore algorithm core */
+	/* Character conversion table, in case sensitive search, gives
+	   uppercase version of given character, otherwise just the same
+	   character. */
+	uchar		ccase[NCHARS];
+};
 
 #ifdef TEST
 extern int	debug;
+/* statistics, not thread safe */
 static long inner_cnt, outer_cnt, cmp_cnt;
-static int plen;
-void show_boyer_moore_report(void)
+void show_boyer_moore_report(const bm_t* bm)
 {
-	if (debug > 1) {
+	if (debug > 1 && bm != NULL) {
 		int i,j;
 		printf("       ");
 		for (i = 0; i < NCHARS; i++)
-			if (c_index[i])
+			if (bm->c_index[i])
 				printf(" %2c", i);
 		printf("\n");
-		for (i = 1; i < plen; i++) {
+		for (i = 1; i < bm->patlen; i++) {
 			printf("%2d: ", i);
-			printf(" %2d", (delta1-1)[i][0]);
+			printf(" %2d", (bm->delta1-1)[i][0]);
 			for (j = 0; j < NCHARS; j++)
-				if (c_index[j] != 0)
-					printf(" %2d", (delta1-1)[i][c_index[j]]);
+				if (bm->c_index[j] != 0)
+					printf(" %2d", (bm->delta1-1)[i][bm->c_index[j]]);
 			printf("\n");
 		}
 	}
@@ -70,17 +73,17 @@ void show_boyer_moore_report(void)
  * get an index entry of its own. All characters that are not in
  * pat[0] .. pat[patlen-3] will be in one index: 0
  */
-static void init_c_index(uchar* pat, int patlen, int iflag)
+static void init_c_index(bm_t* bm, uchar* pat, int patlen, int iflag)
 {
 	register int	i, j;
-	
+
 	for (i = NCHARS; i > 0; )
-		c_index[--i] = 0;
-	for (n_index = 1, i = patlen - 2; i > 0; ) {
-		if (!c_index[j = pat[--i]]) {
-			c_index[j] = n_index++;
+		bm->c_index[--i] = 0;
+	for (bm->n_index = 1, i = patlen - 2; i > 0; ) {
+		if (!bm->c_index[j = pat[--i]]) {
+			bm->c_index[j] = bm->n_index++;
 			if (iflag)
-				c_index[CHCASE(j)] = c_index[j];
+				bm->c_index[CHCASE(j)] = bm->c_index[j];
 		}
 	}
 }
@@ -89,16 +92,16 @@ static void init_c_index(uchar* pat, int patlen, int iflag)
  *
  *	make_ccase
  */
-static void	make_ccase(int iflag)
+static void	make_ccase(bm_t* bm, int iflag)
 {
 	REG1 int	i = NCHARS;
-	
+
 	if (iflag) {
 		while (i--)
-			ccase[i] = IS_LOWER(i) ? CHCASE(i) : i;
+			bm->ccase[i] = IS_LOWER(i) ? CHCASE(i) : i;
 	} else {
 		while (i--)
-			ccase[i] = i;
+			bm->ccase[i] = i;
 	}
 }
 
@@ -109,37 +112,45 @@ static void	make_ccase(int iflag)
  * reoccurence of its right side. Then it calculates jump value
  * for that character position and the character that caused the first
  * mismatch. ie. this routine calculates jump values for all
- * entries of delta1 and delta0.
+ * entries of delta1 and delta0. The pattern is not copied, it must
+ * exist as long as the returned bm_t is used.
  */
-void	gosper(char* pat, REG5 int patlen, int iflag)
+bm_t*	gosper(char* pat, REG5 int patlen, int iflag)
 {
 	REG3 uchar*	patend = (uchar*)pat + patlen - 1;
 	REG1 int	i;
 	REG2 int	j;
 	REG4 int	k;
-		
+	REG6 bm_t*	bm;
+	delta1_jmp_t**	delta1;
+	unsigned*	delta0;
+
+	if ((bm = calloc(1, sizeof(bm_t))) == NULL)
+		error("Out of memory", 3);
+	bm->pat = (uchar*)pat;
+	bm->patlen = patlen;
+	delta1 = bm->delta1;
+	delta0 = bm->delta0;
 #ifdef	TEST
 	inner_cnt = outer_cnt = cmp_cnt = 0L;
-	plen = patlen;
 #endif
-	make_ccase(iflag);
-	large =  maxbuf + MAXREGMUST;
+	make_ccase(bm, iflag);
+	bm->large =  maxbuf + MAXREGMUST;
 	for (j = NCHARS; j; )
 		delta0[--j] = patlen;
 	/* first we initialize the space-saving c_index array */
-	init_c_index(pat, patlen, iflag);
+	init_c_index(bm, (uchar*)pat, patlen, iflag);
 	/* next we allocate jump array */
-	d_free(&delta1[0]);
 	if (patlen > 1
-	&&  (delta1[0] = malloc(sizeof(delta1_jmp_t) * n_index *
+	&&  (delta1[0] = malloc(sizeof(delta1_jmp_t) * bm->n_index *
 				(unsigned)(patlen - 1))) == NULL)
 		error("Out of memory", 3);
 	for (i = 1, j = patlen - 1; i < j; ++i)
-		delta1[i] = (delta1-1)[i] + n_index;
+		delta1[i] = (delta1-1)[i] + bm->n_index;
 	for (i = patlen - 1; i > 0; --i)
-		for (j = n_index; j > 0; )
+		for (j = bm->n_index; j > 0; )
 			(delta1-1)[i][--j] = patlen;
-	
+
 	/* from now on 'j' represents the slide value and
 	** 'i' represents the offset calculated backward from the
 	** 'patend'
@@ -154,12 +165,12 @@ void	gosper(char* pat, REG5 int patlen, int iflag)
 		for (i = 1; ; ++i) {
 			if (i + j >= patlen) {	/* was a match */
 				for (; i < patlen; ++i)
-					for (k = n_index; k > 0; )
+					for (k = bm->n_index; k > 0; )
 						(delta1-1)[i][--k] = j;
 				break;
 			}
 			if (patend[-i] != (k = patend[-i - j])) { /* mismatch */
-				(delta1-1)[i][c_index[k]] = j;
+				(delta1-1)[i][bm->c_index[k]] = j;
 				break;
 			}
 		}
@@ -168,9 +179,22 @@ void	gosper(char* pat, REG5 int patlen, int iflag)
 	** rightmost char matches. This trick saves one comparison
 	** from the inner loop of the Boyer-Moore search.
 	*/
-	delta0[k = *patend] = large;	
-	if (iflag)			
-		delta0[CHCASE(k)] = large;
+	delta0[k = *patend] = bm->large;
+	if (iflag)
+		delta0[CHCASE(k)] = bm->large;
+	return bm;
+}
+
+/**********************************************************************
+ *
+ *	bm_free
+ */
+void bm_free(bm_t* bm)
+{
+	if (bm != NULL) {
+		d_free(&bm->delta1[0]);
+		free(bm);
+	}
 }
 
 /**********************************************************************
@@ -180,11 +204,17 @@ void	gosper(char* pat, REG5 int patlen, int iflag)
  * "reach out and boyer-moore search someone"
  *  soon-to-be-popular bumper sticker
  */
-char* boyer_moore(char* str, char* strend, char* pat, int patlen)
+char* boyer_moore(const bm_t* bm, char* str, char* strend)
 {
 	REG1 uchar*	k;
 	REG2 uchar*	p;
 	REG3 uchar*	s;
+	/* table pointers in local variables keep the loops tight */
+	REG4 const unsigned*	delta0 = bm->delta0;
+	REG5 const uchar*	ccase = bm->ccase;
+	uchar*		pat = bm->pat;
+	int		patlen = bm->patlen;
+	unsigned	large = bm->large;
 
 	/* The variables below exist merely for optimization purposes
 	** to avoid calculations inside the outermost for loop.
@@ -192,14 +222,14 @@ char* boyer_moore(char* str, char* strend, char* pat, int patlen)
 	** though.
 	*/
 	uchar*	str_plus_large = (uchar*)str + large;
-	uchar*	patend = (uchar*)pat + patlen - 1;
-	
+	uchar*	patend = pat + patlen - 1;
+
 	if (patlen == 1 && (!IS_ALPHA(*pat) || ccase['a'] != ccase['A']))
 		return memchr(str, *pat, strend-str+1);
 	for (k = (uchar*)str + patlen - 1; ; ) {
 		p = (uchar*)strend;
-		/* for a large class of patterns, upwards of 80% of 
-		 * match time is spent on the next loop.  We beat 
+		/* for a large class of patterns, upwards of 80% of
+		 * match time is spent on the next loop.  We beat
 		 * existing microcode (vax 'matchc') this way.
 		 * In VAX with 'gcc' compiler the loop is only 4 instructions
 		 * long, in 80([123]?86|1?88) with MSC 5.1 compiler it is 6
@@ -224,17 +254,17 @@ char* boyer_moore(char* str, char* strend, char* pat, int patlen)
 				++cmp_cnt;
 				--k;
 				--p;
-				if (p < (uchar*)pat)
-					return s - patlen + 1;
+				if (p < pat)
+					return (char*)s - patlen + 1;
 			} while (ccase[*k] == *p);
 		} else
 #endif
 		do {
 			--k;
 			--p;
-			if (p < (uchar*)pat)
-				return s - patlen + 1;
+			if (p < pat)
+				return (char*)s - patlen + 1;
 		} while (ccase[*k] == *p);
-		k = s + (delta1-1)[patend - p][c_index[*k]];
+		k = s + (bm->delta1-1)[patend - p][bm->c_index[*k]];
 	}
 }
