@@ -86,6 +86,7 @@ static char		fname_shown	= FALSE;
 static char		first_match	= TRUE;
 static char*		path		= "";	/* current path and filename */
 static char*		expr		= NULL;
+static regbuf_t*	rb;		/* compiled expression */
 static char*		regmust	= NULL;
 static char     fullpath[2048];
 static int		regmustlen;
@@ -493,12 +494,12 @@ static int normal_dgrep(char* buf, char* bufend, REG4 int bufsize)
 		if (use_must) {
 			match = boyer_moore(line,le,regmust,regmustlen);
 			if (match != NULL && !regmust_only) {
-				match = reg_exec(line, le, NULL);
+				match = reg_exec(rb, line, le, NULL);
 				if (++nhits == MUSTCHECK && MUST_TOO_COMMON(line, buf))
 					use_must = FALSE;
 			}
 		} else
-			match = reg_exec(line, le, NULL);
+			match = reg_exec(rb, line, le, NULL);
 		if ((match && !nonmatch) || (!match && nonmatch)) {
 			if (check_flags(line, le) == STOP)
 				return -1;
@@ -535,7 +536,7 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 			    && MUST_TOO_COMMON(matchptr, buf))
 				use_must = FALSE;
 		} else {
-			matchptr = reg_exec(matchptr, bufend, linecount_ptr);
+			matchptr = reg_exec(rb, matchptr, bufend, linecount_ptr);
 			verify = FALSE;
 		}
 		if (matchptr == NULL)
@@ -545,7 +546,7 @@ static int fast_dgrep(char* buf, REG3 char* bufend, int bufsize)
 		matchptr = memchr(matchptr, EOL2, bufend-matchptr);
 		if (matchptr == NULL)
 			matchptr = bufend;
-		if (!verify || reg_exec(linebeg,matchptr,NULL) != NULL)
+		if (!verify || reg_exec(rb, linebeg, matchptr, NULL) != NULL)
 			if (check_flags(linebeg, matchptr) == STOP)
 				return -1;
 		matchptr++;
@@ -905,6 +906,7 @@ int main(int argc, char* argv[])
 	if (argc == 1)
 		short_usage();
 	alloc_buffer();	/* Allocate I/O buffer */
+	rb = reg_alloc();
 	s = getenv("DGREP");
 	if (s != NULL)
 		argv = add_env_args(s, &argc, argv);
@@ -927,12 +929,12 @@ int main(int argc, char* argv[])
 		char eolbuf[2];
 		eolbuf[0] = EOL1;
 		eolbuf[1] = EOL2;
-		s = reg_comp_eol(expr, eolbuf, NEOL(eolbuf), type_bits);
+		s = reg_comp_eol(rb, expr, eolbuf, NEOL(eolbuf), type_bits);
 		if (s != NULL)
 			error(s, 2);
 	}
 	if (!no_boymoore)
-		regmust = exact ? expr : rbuf.regmust;
+		regmust = exact ? expr : rb->regmust;
 	if (regmust) {
 		if (ignorecase) {
 			str_toupper(regmust);
@@ -960,7 +962,7 @@ int main(int argc, char* argv[])
 #ifdef TEST
 	if (debug) {
 		printf("maxbuf = %d\n", maxbuf);
-		show_dfa_report();
+		show_dfa_report(rb);
 		show_boyer_moore_report();
 		fflush(stdout);
 	}

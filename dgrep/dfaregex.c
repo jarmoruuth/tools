@@ -14,14 +14,6 @@
 #include "dfa.h"
 #include "dfaregex.h"
 
-/*
-	Regular expression buffer. It is defined statically here, so
-	it is not possible to compile and use several regexps at the
-	same time. The reason for the static buffer is that it makes
-	things slightly faster on the PC.
-*/
-regbuf_t 	rbuf;
-
 #ifdef TEST
 extern int debug;
 #endif
@@ -32,31 +24,61 @@ extern int debug;
  *
  * Releases memory held by regular expression.
  */
-static void free_rbufmem(void)
+static void free_rbufmem(REG2 regbuf_t* rb)
 {
 	REG1 int	i;
-	
+
 	for (i = 0; i < NTRAN; i++) {
-		d_free(&rbuf.dstates[i]->set);
-		d_free(&rbuf.dstates[i]);
+		if (rb->dstates[i] != NULL)
+			d_free(&rb->dstates[i]->set);
+		d_free(&rb->dstates[i]);
 	}
-	if (rbuf.follow_array != NULL) {
-		for (i = 0; i <= rbuf.root; i++)
-			d_free(&rbuf.follow_array[i]);
-		d_free(&rbuf.follow_array);
+	if (rb->follow_array != NULL) {
+		for (i = 0; i <= rb->root; i++)
+			d_free(&rb->follow_array[i]);
+		d_free(&rb->follow_array);
 	}
-	if (rbuf.tree != NULL) {
-		for (i = 0; i <= rbuf.root; i++) {
-			if (rbuf.tree[i].type == CLASS_ID)
-				d_free(&rbuf.tree[i].val.class);
+	if (rb->tree != NULL) {
+		for (i = 0; i <= rb->root; i++) {
+			if (rb->tree[i].type == CLASS_ID)
+				d_free(&rb->tree[i].val.class);
 		}
-		d_free(&rbuf.tree);
+		d_free(&rb->tree);
 	}
-	d_free(&rbuf.regmust);
-	d_free(&rbuf.language);
-	d_free(&rbuf.tmpstate);
-	d_free(&rbuf.eol);
-	rbuf.mem_allocated = FALSE;
+	d_free(&rb->regmust);
+	d_free(&rb->language);
+	d_free(&rb->tmpstate);
+	d_free(&rb->eol);
+	rb->mem_allocated = FALSE;
+}
+
+/**********************************************************************
+ *
+ *	reg_alloc
+ *
+ * Allocates an empty regular expression buffer.
+ */
+regbuf_t* reg_alloc(void)
+{
+	regbuf_t*	rb;
+
+	if ((rb = calloc(1, sizeof(regbuf_t))) == NULL)
+		error("Out of memory", 3);
+	return rb;
+}
+
+/**********************************************************************
+ *
+ *	reg_free
+ *
+ * Releases regular expression buffer and its memory.
+ */
+void reg_free(regbuf_t* rb)
+{
+	if (rb != NULL) {
+		free_rbufmem(rb);
+		free(rb);
+	}
 }
 
 /**********************************************************************
@@ -66,46 +88,46 @@ static void free_rbufmem(void)
  * Compiles regular expression. It is possible to specify end of line
  * characters.
  */
-char* reg_comp_eol(REG1 char* regexp, char* eol, int neol, int type_bits)
+char* reg_comp_eol(REG2 regbuf_t* rb, REG1 char* regexp, char* eol, int neol,
+		   int type_bits)
 {
 	if (regexp == NULL)
 		return "No regular expression";
-	rbuf.reg_error = NULL;
-	rbuf.ignorecase = type_bits & RE_IGNORECASE;
-	rbuf.search = type_bits & RE_SEARCH;
-	rbuf.full = type_bits & RE_FULL;
-	if (rbuf.mem_allocated)
-		free_rbufmem();
-	if ((rbuf.eol = malloc(neol)) == NULL)
+	free_rbufmem(rb);	/* previous expression or failed compile */
+	rb->reg_error = NULL;
+	rb->ignorecase = type_bits & RE_IGNORECASE;
+	rb->search = type_bits & RE_SEARCH;
+	rb->full = type_bits & RE_FULL;
+	if ((rb->eol = malloc(neol)) == NULL)
 		return "Out of memory";
-	rbuf.neol = neol;
-	memcpy(rbuf.eol, eol, neol);
-	if (create_tree(regexp) == ERROR)
-		return rbuf.reg_error;
-	if (!find_regmust(rbuf.tree, rbuf.root)) {
-		free_rbufmem();
-		return rbuf.reg_error = "Out of memory when allocating regmust";
+	rb->neol = neol;
+	memcpy(rb->eol, eol, neol);
+	if (create_tree(rb, (uchar*)regexp) == ERROR)
+		return rb->reg_error;
+	if (!find_regmust(rb)) {
+		free_rbufmem(rb);
+		return rb->reg_error = "Out of memory when allocating regmust";
 	}
 #ifdef TEST
 	if (debug)
-		printf("Regmust = '%s'\n", rbuf.regmust);
+		printf("Regmust = '%s'\n", rb->regmust);
 #endif
-	if (!calcpos()) {
-		free_rbufmem();
-		return rbuf.reg_error = "Out of memory in calcpos";
+	if (!calcpos(rb)) {
+		free_rbufmem(rb);
+		return rb->reg_error = "Out of memory in calcpos";
 	}
-	if (!dfa()) {
-		free_rbufmem();
-		return rbuf.reg_error = "Out of memory when creating dfa";
+	if (!dfa(rb)) {
+		free_rbufmem(rb);
+		return rb->reg_error = "Out of memory when creating dfa";
 	}
-	rbuf.mem_allocated = TRUE;
+	rb->mem_allocated = TRUE;
 #ifdef TEST
 	if (debug > 1) {
-		print_accepting_states();
-		print_dtran();
+		print_accepting_states(rb);
+		print_dtran(rb);
 	}
 #endif
-	return rbuf.reg_error;
+	return rb->reg_error;
 }
 
 /**********************************************************************
@@ -115,11 +137,11 @@ char* reg_comp_eol(REG1 char* regexp, char* eol, int neol, int type_bits)
  * Compiles regular expression with predefined end of line character
  * suitable for C's null-terminating string representation.
  */
-char* reg_comp(char* regexp, int type_bits)
+char* reg_comp(regbuf_t* rb, char* regexp, int type_bits)
 {
 	char c = '\0';
-	
-	return reg_comp_eol(regexp, &c, 1, type_bits);
+
+	return reg_comp_eol(rb, regexp, &c, 1, type_bits);
 }
 
 /**********************************************************************
@@ -138,7 +160,7 @@ char* reg_comp(char* regexp, int type_bits)
  *		an end of line character, if it does not belong to the matched
  *		line. If linecnt is NULL, it is not incremented.
  */
-char* reg_exec(char* strbeg, REG5 char* strend, REG6 ulong* linecnt)
+char* reg_exec(regbuf_t* rb, char* strbeg, REG5 char* strend, REG6 ulong* linecnt)
 {
 	REG1 uchar*     s;
 #ifdef FAST
@@ -152,17 +174,17 @@ char* reg_exec(char* strbeg, REG5 char* strend, REG6 ulong* linecnt)
 #endif
 	REG4 int	i;
 	
-	s = strbeg;
+	s = (uchar*)strbeg;
 	if (s == NULL || strend == NULL)
 		return NULL;
-	if (rbuf.begline) {
+	if (rb->begline) {
 check_bol:
 		/* we need separate beginning-of-line check, because
 		   there is no real character for that position */
 		prev_state = FIRST_STATE;
-		cur_state = rbuf.dstates[0]->tran[BOL];
+		cur_state = rb->dstates[0]->tran[BOL];
 		if (cur_state == UNKNOWN)
-			cur_state = get_transition(FIRST_STATE, BOL);
+			cur_state = get_transition(rb, FIRST_STATE, BOL);
 		if (cur_state == STOPSTATE)
 			cur_state = FIRST_STATE;  /* we might match later */
 		else if (cur_state == ACCEPTING)
@@ -175,7 +197,7 @@ check_bol:
 			cur_state = state_of(cur_state)->tran[*s++];
 		}
 		if (cur_state == UNKNOWN)
-			cur_state = get_transition(prev_state, *(s-1));
+			cur_state = get_transition(rb, prev_state, *(s-1));
 		if (cur_state == END_OF_LINE) {
 			cur_state = state_of(prev_state)->tran[EOL];
 			if (cur_state == ACCEPTING)
@@ -184,19 +206,19 @@ check_bol:
 				(*linecnt)++;
 			/* find eol character position in array of eol
 			   characters */
-			for (i = 0; i < rbuf.neol; i++)
-				if (s[-1] == rbuf.eol[i])
+			for (i = 0; i < rb->neol; i++)
+				if (s[-1] == rb->eol[i])
 					break;
 			/* skip all following eol characters that are in the
 			   same order as in the array of eol characters */
-			for (i++; i < rbuf.neol && *s == rbuf.eol[i]; i++, s++)
+			for (i++; i < rb->neol && *s == rb->eol[i]; i++, s++)
 				;
 			if (s > (uchar*)strend || cur_state == STOPSTATE)
 				break;	/* return NULL */
-			if (rbuf.begline)
+			if (rb->begline)
 				goto check_bol;
 			cur_state = FIRST_STATE;
 		}
 	} while (cur_state < MAXTRAN);
-	return cur_state == ACCEPTING ? s-1 : NULL;
+	return cur_state == ACCEPTING ? (char*)s-1 : NULL;
 }

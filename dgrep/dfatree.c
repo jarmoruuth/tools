@@ -70,6 +70,7 @@ static int	regpos;		/* index to regexp */
 static int	last_class;	/* last character class in classes */
 static set_t**	classes;	/* array of character classes for regexp */
 static uchar*	language;	/* boolean array of characters in language */
+static regbuf_t*	rb;		/* regbuf for the tree, set by create_tree */
 
 static int expression (void);
 
@@ -86,7 +87,7 @@ static int expression (void);
 static int tree_error(char* msg)
 {
 	current = next = pos = ERROR;	/* stop parsing */
-	rbuf.reg_error = msg;
+	rb->reg_error = msg;
 	return ERROR;
 }
 
@@ -120,7 +121,7 @@ static int new_pos(void)
 static void add_language(int ch)
 {
 	language[ch] = TRUE;
-	if (rbuf.ignorecase && IS_ALPHA(ch))
+	if (rb->ignorecase && IS_ALPHA(ch))
 		language[CHCASE(ch)] = TRUE;
 }
 
@@ -158,10 +159,10 @@ static int add_eol(void)
 	}
 	set_clear(class, set_bytesize(NCLASSITEMS));
 	
-	for (i = 0; i < rbuf.neol; i++) {
-		if (!language[rbuf.eol[i]])
-			add_language(rbuf.eol[i]);
-		add_set(class, rbuf.eol[i]);
+	for (i = 0; i < rb->neol; i++) {
+		if (!language[rb->eol[i]])
+			add_language(rb->eol[i]);
+		add_set(class, rb->eol[i]);
 	}
 	
 	if (new_pos() == ERROR)
@@ -207,7 +208,7 @@ static void add_regexp(int item)
 			memerr = TRUE;
 	}
 	++regpos;
-	if  (!(item & ~MAXCHAR) && rbuf.ignorecase && IS_LOWER(item))
+	if  (!(item & ~MAXCHAR) && rb->ignorecase && IS_LOWER(item))
 		regexp[regpos] = TO_UPPER(item);
 	else
 		regexp[regpos] = item;
@@ -322,8 +323,8 @@ static void add_class(REG1 uchar* class)
 {
 	REG2 int	i;
 	
-	for (i = 0; i < rbuf.neol; i++)
-		class[rbuf.eol[i]] = FALSE;
+	for (i = 0; i < rb->neol; i++)
+		class[rb->eol[i]] = FALSE;
 	class[EOL] = class[REM] = FALSE;
 	if (classes == NULL) {
 		if ((classes = malloc(sizeof(set_t *))) == NULL) {
@@ -409,7 +410,7 @@ static uchar* get_class(REG3 uchar* str)
 		}
 		class[*str] = TRUE;
 	}
-	if (rbuf.ignorecase) {
+	if (rb->ignorecase) {
 		for (i = 1; i < NCHARS; i++)
 			if (IS_ALPHA(i))
 				class[i] |= class[CHCASE(i)];
@@ -433,8 +434,8 @@ static void add_any(void)
 	uchar	class[NCLASSITEMS];
 
 	init_class(class, TRUE);
-	for (i = 0; i < rbuf.neol; i++)
-		class[rbuf.eol[i]] = FALSE;
+	for (i = 0; i < rb->neol; i++)
+		class[rb->eol[i]] = FALSE;
 	class[BOL] = class[EOL] = FALSE;
 	add_class(class);
 }
@@ -481,10 +482,10 @@ static char* make_regexp(REG1 uchar* str)
 	   O(n+m)-time.
 	*/
 	memerr = FALSE;
-	if (rbuf.search)
+	if (rb->search)
 		add_search_init();
 	CLEAR_LANGUAGE(language);
-	rbuf.begline = rbuf.endline = FALSE;
+	rb->begline = rb->endline = FALSE;
 	for (; *str && !memerr; str++) {
 		switch (*str) {
 			case '\\':
@@ -549,11 +550,11 @@ static char* make_regexp(REG1 uchar* str)
 					add_regexp(OR_OP);
 				break;
 			case '^':
-				rbuf.begline = TRUE;
+				rb->begline = TRUE;
 				add_regexp(BOL_OP);
 				break;
 			case '$':
-				rbuf.endline = TRUE;
+				rb->endline = TRUE;
 				add_regexp(EOL_OP);
 				break;
 			default:
@@ -565,7 +566,7 @@ static char* make_regexp(REG1 uchar* str)
 		}
 	}
 	/* Finish L_PAR started at add_search_init() */
-	if (rbuf.search)
+	if (rb->search)
 		add_regexp(R_PAR);
 	add_regexp(EOS);
 	if (memerr)
@@ -747,14 +748,14 @@ static bool convert_language(void)
 		if (language[i])
 			j++;
 	/* allocate buffer for language items */
-	if ((rbuf.language = malloc((j+1)*sizeof(rbuf.language[0]))) == NULL)
+	if ((rb->language = malloc((j+1)*sizeof(rb->language[0]))) == NULL)
 		return FALSE;
-	/* Copy language elements to the rbuf. Note that the zeroth element
+	/* Copy language elements to the rb-> Note that the zeroth element
 	   contains the number of characters in language. */
-	rbuf.language[0] = j;
+	rb->language[0] = j;
 	for (i = 0, j = 1; i < NLANG; i++)
 		if (language[i])
-			rbuf.language[j++] = i;
+			rb->language[j++] = i;
 	return TRUE;
 }
 	
@@ -832,9 +833,9 @@ static int error_return(REG1 char* msg)
 	d_free(&treestart);
 	free_treemem();
 	if (msg)
-		rbuf.reg_error = msg;
-	else if (!rbuf.reg_error)
-		rbuf.reg_error = "Error in expression";
+		rb->reg_error = msg;
+	else if (!rb->reg_error)
+		rb->reg_error = "Error in expression";
 	return ERROR;
 }
 
@@ -845,8 +846,8 @@ static int error_return(REG1 char* msg)
 static char* init_tree(void)
 {
 	classes = NULL;
-	treestart = treeptr = rbuf.tree = NULL;
-	rbuf.root = -1;
+	treestart = treeptr = rb->tree = NULL;
+	rb->root = -1;
 	regexp = NULL;
 	if ((language = malloc(NLANG)) == NULL)
 		return "Out of memory";
@@ -860,11 +861,12 @@ static char* init_tree(void)
  * Creates syntax tree from given regular expression. Returns root
  * of the tree or -1, if there was errors.
  */
-int create_tree(REG2 uchar* str)
+int create_tree(regbuf_t* target, REG2 uchar* str)
 {
 	REG1 int	left;
 	REG3 char*	msg;
 	
+	rb = target;
 	if ((msg = init_tree()) != NULL)
 		return error_return(msg);
 	if ((msg = make_regexp(str)) != NULL)
@@ -885,7 +887,7 @@ int create_tree(REG2 uchar* str)
 	if (!convert_language())
 		return error_return("Out of memory");
 	free_treemem();
-	rbuf.tree = treestart;
-	rbuf.root = pos;
+	rb->tree = treestart;
+	rb->root = pos;
 	return pos;
 }

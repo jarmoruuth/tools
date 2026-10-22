@@ -45,9 +45,9 @@ static void complain(char* s1, char* s2);
 static void fatal(char* s1, char* s2);
 
 #ifdef TEST
-extern void show_dfa_report(void);
-extern void print_accepting_states(void);
-extern void print_dtran(void);
+extern void show_dfa_report(regbuf_t* rb);
+extern void print_accepting_states(regbuf_t* rb);
+extern void print_dtran(regbuf_t* rb);
 #endif
 
 char buf[BUFSIZ];
@@ -58,12 +58,14 @@ int status = 0;			/* Exit status. */
 int debug = 0;
 int test = 0;
 int type_bits = RE_SEARCH;
+regbuf_t* rb;			/* compiled expression */
 
 int main(int argc, char *argv[])
 {
 	char *r;
 	int		opt;
 
+	rb = reg_alloc();
 	d_opterr = 0;	/* handle errors ourselves */
 	while ((opt = d_getopt(argc, argv, "sifdt")) != EOF) {
 		switch (opt) {
@@ -94,11 +96,11 @@ int main(int argc, char *argv[])
 	}
 	if (argc-d_optind != 2)
 		usage();
-	r = reg_comp(argv[d_optind++], type_bits);
+	r = reg_comp(rb, argv[d_optind++], type_bits);
 	if (r != NULL)
 		complain("reg_comp failure '%s'", r);
 	if (argc > 2) {
-		r = reg_exec(argv[d_optind], argv[d_optind]+strlen(argv[d_optind]), NULL);
+		r = reg_exec(rb, argv[d_optind], argv[d_optind]+strlen(argv[d_optind]), NULL);
 		printf("%s\n", r != NULL ? r : "(no match)");
 	}
 	fflush(stdout);
@@ -147,12 +149,12 @@ static void multiple(void)
 	lineno = 9990;
 	if (test)
 		printf("%d: reg_comp((char *)NULL)\n", lineno);
-	if (reg_comp((char *)NULL, type_bits) == NULL)
+	if (reg_comp(rb, (char *)NULL, type_bits) == NULL)
 		fatal("reg_comp(NULL) doesn't complain", "");
 	lineno = 9991;
 	if (test)
 		printf("%d: reg_comp(\"foo\")\n", lineno);
-	r = reg_comp("foo", type_bits);
+	r = reg_comp(rb, "foo", type_bits);
 	if (r != NULL) {
 		fatal("reg_comp(\"foo\") fails", "");
 		return;
@@ -160,7 +162,7 @@ static void multiple(void)
 	lineno = 9992;
 	if (test)
 		printf("%d: reg_exec((char *)NULL)\n", lineno);
-	if (reg_exec((char *)NULL, NULL, NULL) != NULL)
+	if (reg_exec(rb, (char *)NULL, NULL, NULL) != NULL)
 		fatal("reg_exec(..., NULL) doesn't complain", "");
 }
 
@@ -170,7 +172,7 @@ static void try(char **fields)
 
 	if (test)
 		printf("%d: %s %s %s\n", lineno,fields[0], fields[1], fields[2]);
-	r = reg_comp(fields[0], type_bits);
+	r = reg_comp(rb, fields[0], type_bits);
 	if (r != NULL) {
 		if (!test)
 			printf("%d: %s %s %s\n", lineno,fields[0], fields[1], fields[2]);
@@ -185,7 +187,7 @@ static void try(char **fields)
 			printf("%d: %s %s %s\n", lineno,fields[0], fields[1], fields[2]);
 		fatal("unexpected reg_comp success  `%s'", r);
 	}
-	if (!reg_exec(fields[1], fields[2]-1, NULL)) {
+	if (!reg_exec(rb, fields[1], fields[2]-1, NULL)) {
 		if (*fields[2] != 'n') {
 			if (!test)
 				printf("%d: %s %s %s\n", lineno,fields[0], fields[1], fields[2]);
@@ -193,7 +195,7 @@ static void try(char **fields)
 		}
 #ifdef TEST
 		if (debug)
-			show_dfa_report();
+			show_dfa_report(rb);
 #endif
 		return;
 	}
@@ -205,7 +207,7 @@ static void try(char **fields)
 	}
 #ifdef TEST
 	if (debug)
-		show_dfa_report();
+		show_dfa_report(rb);
 #endif
 }
 
@@ -222,8 +224,8 @@ static void fatal(char *s1, char *s2)
 	complain(s1, s2);
 #ifdef TEST
 	if (debug > 1) {
-		print_accepting_states();
-		print_dtran();
+		print_accepting_states(rb);
+		print_dtran(rb);
 	}
 #endif
 	fflush(stdout);

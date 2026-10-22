@@ -2,7 +2,7 @@
  *
  *	REGMUST.C
  *
- * Finds regmust string from syntax tree and stores it to rbuf.regmust.
+ * Finds regmust string from syntax tree and stores it to rb->regmust.
  *
  * Author: Jarmo Ruuth 15-Mar-1988
  *
@@ -19,18 +19,18 @@
  *
  * Saves regmust.
  */
-static bool save_must(REG1 node_t* tree, REG2 int pos, int len)
+static bool save_must(regbuf_t* rb, REG1 node_t* tree, REG2 int pos, int len)
 {
 	REG3 char*	ptr;
 	REG4 int	left, right;
 
 	if (len <= 0) {
-		rbuf.regmust = NULL;
+		rb->regmust = NULL;
 		return TRUE;
 	}
 	if ((ptr = malloc(len+1)) == NULL)
 		return FALSE;
-	rbuf.regmust = ptr;
+	rb->regmust = ptr;
 	ptr += len;
 	*ptr-- = '\0';
 	while (tree[pos].type == CAT && len--) {
@@ -43,8 +43,8 @@ static bool save_must(REG1 node_t* tree, REG2 int pos, int len)
 	}
 	if (len && tree[pos].type == ID)
 		*ptr-- = tree[pos].val.item;
-	if (strlen(rbuf.regmust) == 0)
-		d_free(&rbuf.regmust);
+	if (strlen(rb->regmust) == 0)
+		d_free(&rb->regmust);
 	return TRUE;
 }
 
@@ -96,20 +96,22 @@ static int must_len(REG1 node_t* tree, REG2 int* pos)
  * CAT node. A better algorithm should also check possible common
  * substrings from OR's, now we just give up if we find OR.
  */
-bool find_regmust(REG1 node_t* tree, int root)
+bool find_regmust(regbuf_t* rb)
 {
 	REG2 int	len, new_len;
 	REG4 int	pos, save;
+	REG1 node_t*	tree = rb->tree;
+	int		root = rb->root;
 
-	rbuf.regmust = NULL;
-	root -= rbuf.search ? 3 : 2;
+	rb->regmust = NULL;
+	root -= rb->search ? 3 : 2;
 	if (root == 0) {
-		if (rbuf.tree[0].type == ID 
-		    && IS_MUST_CH(rbuf.tree[0].val.item))
+		if (rb->tree[0].type == ID 
+		    && IS_MUST_CH(rb->tree[0].val.item))
 			len = 1;
 		else
 			len = 0;
-		return save_must(tree, 0, len);
+		return save_must(rb, tree, 0, len);
 	}
 	len = 0;
 	while (tree[root].type == CAT) {
@@ -123,10 +125,10 @@ bool find_regmust(REG1 node_t* tree, int root)
 			root = tree[root].val.next.left;
 	}
 	if (tree[root].type == ID && len < 1 
-	    && IS_MUST_CH(rbuf.tree[root].val.item))
+	    && IS_MUST_CH(rb->tree[root].val.item))
 	{
 		len = 1;
 		pos = root;
 	}
-	return save_must(tree, pos, len > MAXREGMUST ? MAXREGMUST : len);
+	return save_must(rb, tree, pos, len > MAXREGMUST ? MAXREGMUST : len);
 }

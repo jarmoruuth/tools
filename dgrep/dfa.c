@@ -30,20 +30,20 @@
  *
  * Allocates state sets and transition table.
  */
-static bool init_dfa(void)
+static bool init_dfa(regbuf_t* rb)
 {
 	REG1 int	i;
 	
 	for (i = 0; i < NTRAN; i++) {
-		if ((rbuf.dstates[i] = calloc(1, sizeof(state_t))) == NULL)
+		if ((rb->dstates[i] = calloc(1, sizeof(state_t))) == NULL)
 			return FALSE;
-		if ((rbuf.dstates[i]->set = calloc(1, rbuf.setsize)) == NULL)
+		if ((rb->dstates[i]->set = calloc(1, rb->setsize)) == NULL)
 			return FALSE;
 #ifdef FAST
-		dassert(rbuf.dstates[i] < MAXTRAN);
+		dassert(rb->dstates[i] < MAXTRAN);
 #endif
 	}
-	if ((rbuf.tmpstate = malloc(rbuf.setsize)) == NULL)
+	if ((rb->tmpstate = malloc(rb->setsize)) == NULL)
 		return FALSE;
 	return TRUE;
 }
@@ -55,7 +55,7 @@ static bool init_dfa(void)
  * Tests if the given state set is accepting state. State is accepting
  * if right end marker position (at root-1) belongs to it.
  */
-#define is_accepting(_state_set) in_set(_state_set, rbuf.root-1)
+#define is_accepting(_state_set) in_set(_state_set, rb->root-1)
 
 /**********************************************************************
  *
@@ -66,7 +66,7 @@ static bool init_dfa(void)
  * is index to the state.
  */
 #ifdef FAST
-#define transition_to(_index) ((tran_t)rbuf.dstates[_index])
+#define transition_to(_index) ((tran_t)rb->dstates[_index])
 #else
 #define transition_to(_index) ((tran_t)(_index))
 #endif
@@ -83,34 +83,34 @@ static bool init_dfa(void)
  * UNKNOWN. If RE_FULL is not specified and we have accepting state, returns
  * transition to the virtual ACCEPTING state.
  */
-static tran_t build_state(set_t* state_set, unsigned inp, state_t* state)
+static tran_t build_state(regbuf_t* rb, set_t* state_set, unsigned inp, state_t* state)
 {
 	REG1 int	i;
 	REG2 set_t*	dsset = state->set;
 	REG3 node_t*	tptr;
 	REG4 int	type;
 	
-	if (rbuf.ignorecase && IS_LOWER(inp))
+	if (rb->ignorecase && IS_LOWER(inp))
 		inp = TO_UPPER(inp);
-	set_clear(state_set, rbuf.setsize);
+	set_clear(state_set, rb->setsize);
 	/* build union of followpositions */
-	for (i = rbuf.root; i >= 0; i--) {
+	for (i = rb->root; i >= 0; i--) {
 		if (!in_set(dsset, i))
 			continue;
-		tptr = &rbuf.tree[i];
+		tptr = &rb->tree[i];
 		type = tptr->type;
 		if ((type == ID && tptr->val.item == inp)
 		    || (type == CLASS_ID && in_set(tptr->val.class, inp)))
-			set_union(state_set, state_set, rbuf.follow_array[i],
-				  rbuf.setsize);
+			set_union(state_set, state_set, rb->follow_array[i],
+				  rb->setsize);
 	}
-	if (set_empty(state_set, rbuf.setsize))
-		return rbuf.default_tran;
-	if (!rbuf.full && is_accepting(state_set))
+	if (set_empty(state_set, rb->setsize))
+		return rb->default_tran;
+	if (!rb->full && is_accepting(state_set))
 		return ACCEPTING;
 	/* try to find state with same set of followpositions */
-	for (i = rbuf.last_state; i >= 0; i--)
-		if (set_equal(state_set, rbuf.dstates[i]->set, rbuf.setsize))
+	for (i = rb->last_state; i >= 0; i--)
+		if (set_equal(state_set, rb->dstates[i]->set, rb->setsize))
 			return transition_to(i);
 	if (is_accepting(state_set))
 		return ACCEPTING;
@@ -125,7 +125,7 @@ static tran_t build_state(set_t* state_set, unsigned inp, state_t* state)
  * Adds new state to dstates in position 'state'. Initializes also
  * state transition table in dstates.
  */
-static void add_state(set_t* state_set, REG2 state_t* state)
+static void add_state(regbuf_t* rb, set_t* state_set, REG2 state_t* state)
 {
 	REG1 int	i;
 	REG3 unsigned*	langptr;
@@ -136,17 +136,17 @@ static void add_state(set_t* state_set, REG2 state_t* state)
 	                state->tran[i] = ACCEPTING;
 	else
 	        for (i = 0; i < NLANG; i++)
-	                state->tran[i] = rbuf.default_tran;
-	state->tran[EOL] = state->tran[rbuf.eol[0]];
-	for (i = 0; i < rbuf.neol; i++)
-		state->tran[rbuf.eol[i]] = END_OF_LINE;
-	if (rbuf.full || !is_accepting(state_set)) {
-		i = rbuf.language[0];
-		langptr = rbuf.language + i;
+	                state->tran[i] = rb->default_tran;
+	state->tran[EOL] = state->tran[rb->eol[0]];
+	for (i = 0; i < rb->neol; i++)
+		state->tran[rb->eol[i]] = END_OF_LINE;
+	if (rb->full || !is_accepting(state_set)) {
+		i = rb->language[0];
+		langptr = rb->language + i;
 		while (i--)
 			state->tran[*langptr--] = UNKNOWN;
 	}
-	set_copy(state->set, state_set, rbuf.setsize);
+	set_copy(state->set, state_set, rb->setsize);
 }
 
 /**********************************************************************
@@ -157,14 +157,14 @@ static void add_state(set_t* state_set, REG2 state_t* state)
  * transition isn't UNKNOWN. Returns transition, which can be changed
  * in the case of end of line transition.
  */
-static tran_t add_transition(REG2 state_t* state, REG3 int input,
+static tran_t add_transition(regbuf_t* rb, REG2 state_t* state, REG3 int input,
 			     REG1 tran_t tran)
 {
 	REG4 int	i;
 
 	if (tran != UNKNOWN) {
-		for (i = 0; i < rbuf.neol; i++) {
-			if (input == rbuf.eol[i]) {
+		for (i = 0; i < rb->neol; i++) {
+			if (input == rb->eol[i]) {
 				state->tran[EOL] = tran;
 				tran = END_OF_LINE;
 				break;
@@ -172,7 +172,7 @@ static tran_t add_transition(REG2 state_t* state, REG3 int input,
 		}
 	}
 	state->tran[input] = tran;
-	if (rbuf.ignorecase && IS_ALPHA(input))
+	if (rb->ignorecase && IS_ALPHA(input))
 		state->tran[CHCASE(input)] = tran;
 	return tran;
 }
@@ -183,9 +183,9 @@ static tran_t add_transition(REG2 state_t* state, REG3 int input,
  *
  * Frees all unnecessary memory.
  */
-static void free_dfamem(void)
+static void free_dfamem(regbuf_t* rb)
 {
-	d_free(&rbuf.tree[rbuf.root].firstpos);
+	d_free(&rb->tree[rb->root].firstpos);
 }
 
 #if FIXTRAN > 0		/* don't include unused code */
@@ -196,13 +196,13 @@ static void free_dfamem(void)
  *
  * Finds next unmarked state.
  */
-static state_t* unmarked(void)
+static state_t* unmarked(regbuf_t* rb)
 {
 	REG1 int	i;
 	
-	for (i = 0; i <= rbuf.last_state; i++)
-		if (!rbuf.dstates[i]->marked)
-			return rbuf.dstates[i];
+	for (i = 0; i <= rb->last_state; i++)
+		if (!rb->dstates[i]->marked)
+			return rb->dstates[i];
 	return NULL;
 }
 
@@ -212,7 +212,7 @@ static state_t* unmarked(void)
  *
  * Constructs FIXTRAN first transitions to dtran.
  */
-static void build_maxtran(void)
+static void build_maxtran(regbuf_t* rb)
 {
 	REG1 int	input;
 	REG2 tran_t	tran;
@@ -221,20 +221,20 @@ static void build_maxtran(void)
 	REG5 int	state_cnt;
 
 	state_cnt = 0;
-	while (state_cnt++ < FIXTRAN && (state = unmarked()) != NULL) {
+	while (state_cnt++ < FIXTRAN && (state = unmarked(rb)) != NULL) {
 		state->marked = TRUE;
-		for (i = 0; i < rbuf.language[0]; i++) {
-			input = rbuf.language[i+1];
+		for (i = 0; i < rb->language[0]; i++) {
+			input = rb->language[i+1];
 			if (input == EOL)
 				continue;
-			tran = build_state(rbuf.tmpstate, input, state);
-			if (tran == UNKNOWN && rbuf.last_state < NTRAN-1) {
-				rbuf.last_state++;
-				tran = transition_to(rbuf.last_state);
-				add_state(rbuf.tmpstate, state_of(tran));
+			tran = build_state(rb, rb->tmpstate, input, state);
+			if (tran == UNKNOWN && rb->last_state < NTRAN-1) {
+				rb->last_state++;
+				tran = transition_to(rb->last_state);
+				add_state(rb, rb->tmpstate, state_of(tran));
 				state_of(tran)->marked = FALSE;
 			}
-			add_transition(state, input, tran);
+			add_transition(rb, state, input, tran);
 		}
 	}
 }
@@ -245,22 +245,22 @@ static void build_maxtran(void)
  *
  *	dfa
  */
-bool dfa(void)
+bool dfa(regbuf_t* rb)
 {
 	dassert(MAXTRAN < UNKNOWN);
-	if (!init_dfa()) {
-		free_dfamem();
+	if (!init_dfa(rb)) {
+		free_dfamem(rb);
 		return FALSE;
 	}
-	rbuf.last_state = 0;
-	rbuf.default_tran = rbuf.search ? FIRST_STATE : STOPSTATE;
+	rb->last_state = 0;
+	rb->default_tran = rb->search ? FIRST_STATE : STOPSTATE;
 	/* create initial state */
-	add_state(rbuf.tree[rbuf.root].firstpos, rbuf.dstates[0]);
-	rbuf.dstates[0]->marked = FALSE;
+	add_state(rb, rb->tree[rb->root].firstpos, rb->dstates[0]);
+	rb->dstates[0]->marked = FALSE;
 #if FIXTRAN > 0
-	build_maxtran();
+	build_maxtran(rb);
 #endif
-	free_dfamem();
+	free_dfamem(rb);
 	return TRUE;
 }
 
@@ -274,7 +274,7 @@ static int 	removed_tran_cnt = 0;
  *
  * Removes all transitions to given state.
  */
-static void remove_transition(tran_t tran)
+static void remove_transition(regbuf_t* rb, tran_t tran)
 {
 	REG3 int	i;
 	REG1 int	j;
@@ -284,7 +284,7 @@ static void remove_transition(tran_t tran)
 	++removed_tran_cnt;
 #endif
 	for (i = 0; i < NTRAN; i++) {
-		pos = rbuf.dstates[i]->tran;
+		pos = rb->dstates[i]->tran;
 		for (j = 0; j < NLANG; j++, pos++) {
 		        if (*pos == tran)
 		                *pos = UNKNOWN;
@@ -297,36 +297,36 @@ static void remove_transition(tran_t tran)
  *	free_cache_pos
  *
  * Returns free cache position. If cache is full, removes old one
- * and returns it as free position. For each state rbuf.dstates[state].marked
+ * and returns it as free position. For each state rb->dstates[state].marked
  * is used as a use counter for that state (i.e. how many transitions there
  * are to that state). When cache position is needed, the one with smallest
  * reference count is freed and returned. If there are more than one state with
  * the same reference count then the last one is taken.
  */
-static tran_t free_cache_pos(REG4 state_t* state)
+static tran_t free_cache_pos(regbuf_t* rb, REG4 state_t* state)
 {
 	REG1 unsigned	i;
 	REG2 unsigned	mincnt;
 	REG3 unsigned	minpos;
 	REG5 int	minstate;
 	
-	if (rbuf.last_state < NTRAN-1) {
-		rbuf.last_state++;
-		return transition_to(rbuf.last_state);
+	if (rb->last_state < NTRAN-1) {
+		rb->last_state++;
+		return transition_to(rb->last_state);
 	}
 	mincnt = ~0; /* == maxint */
 	minstate = max(FIXTRAN, 1);	/* never remove state zero */
 	/* find the removed state (the one with smallesr reference count) */
-	for (i = rbuf.last_state; i >= minstate; i--) {
-		if (mincnt > rbuf.dstates[i]->marked
-		    && rbuf.dstates[i] != state)
+	for (i = rb->last_state; i >= minstate; i--) {
+		if (mincnt > rb->dstates[i]->marked
+		    && rb->dstates[i] != state)
 		{
-			mincnt = rbuf.dstates[i]->marked;
+			mincnt = rb->dstates[i]->marked;
 			minpos = i;
 		}
 	}
-	rbuf.dstates[minpos]->marked = 1;
-	remove_transition(transition_to(minpos));
+	rb->dstates[minpos]->marked = 1;
+	remove_transition(rb, transition_to(minpos));
 	return transition_to(minpos);
 }
 
@@ -337,18 +337,18 @@ static tran_t free_cache_pos(REG4 state_t* state)
  * Gets real transition for UNKNOWN transition. This function is called
  * when matching the pattern.
  */
-tran_t get_transition(REG2 tran_t tran, REG3 unsigned input)
+tran_t get_transition(regbuf_t* rb, REG2 tran_t tran, REG3 unsigned input)
 {
 	REG1 tran_t	new_tran;
 
-	new_tran = build_state(rbuf.tmpstate, input, state_of(tran));
+	new_tran = build_state(rb, rb->tmpstate, input, state_of(tran));
 	if (new_tran == UNKNOWN) {
 		/* new state is not one of the old states */
-		new_tran = free_cache_pos(state_of(tran));
-		add_state(rbuf.tmpstate, state_of(new_tran));
+		new_tran = free_cache_pos(rb, state_of(tran));
+		add_state(rb, rb->tmpstate, state_of(new_tran));
 	} else if (new_tran < MAXTRAN)
 		state_of(new_tran)->marked++;
-	return add_transition(state_of(tran), input, new_tran);
+	return add_transition(rb, state_of(tran), input, new_tran);
 }
 
 #ifdef TEST
@@ -357,7 +357,7 @@ tran_t get_transition(REG2 tran_t tran, REG3 unsigned input)
  *
  *	show_dfa_report
  */
-void show_dfa_report(void)
+void show_dfa_report(regbuf_t* rb)
 {
 	int	i, j;
 	long	ntran, utran;
@@ -365,14 +365,14 @@ void show_dfa_report(void)
 	ntran = utran = 0L;
 	printf ("%u states of %u possible states used\n"
 		"%u cache states deleted\n",
-		rbuf.last_state+1,
+		rb->last_state+1,
 		NTRAN,
 		removed_tran_cnt);
-	for (i = 0; i <= rbuf.last_state; i++)
-		for (j = 0; j < rbuf.language[0]; j++)
-			if (rbuf.dstates[i]->tran[rbuf.language[j+1]] == UNKNOWN)
+	for (i = 0; i <= rb->last_state; i++)
+		for (j = 0; j < rb->language[0]; j++)
+			if (rb->dstates[i]->tran[rb->language[j+1]] == UNKNOWN)
 				utran++;
-	ntran = (rbuf.last_state+1)*rbuf.language[0];
+	ntran = (rb->last_state+1)*rb->language[0];
 	printf("%lu transitions of %lu possible unknown transitions (%lu%%) are unknown\n",
 		utran, ntran, ntran == 0 ? 0 : utran*100/ntran);
 	fflush(stdout);
@@ -382,13 +382,13 @@ void show_dfa_report(void)
  *
  *	print_accepting_states
  */
-void print_accepting_states(void)
+void print_accepting_states(regbuf_t* rb)
 {
 	REG1 int	i;
 	
 	printf("Accepting states: ");
-	for (i = 0; i <= rbuf.last_state; i++)
-		if (is_accepting(rbuf.dstates[i]->set))
+	for (i = 0; i <= rb->last_state; i++)
+		if (is_accepting(rb->dstates[i]->set))
 			printf("%d ", i);
 	printf("\n");
 	fflush(stdout);
@@ -432,13 +432,13 @@ char* char_image(int c)
  *
  *	print_language
  */
-void print_language(void)
+void print_language(regbuf_t* rb)
 {
 	int	i;
 
 	printf("    ");
-	for (i = 0; i < rbuf.language[0]; i++)
-		printf("%3s ", char_image(rbuf.language[i+1]));
+	for (i = 0; i < rb->language[0]; i++)
+		printf("%3s ", char_image(rb->language[i+1]));
 	printf("\n");
 	fflush(stdout);
 }
@@ -447,7 +447,7 @@ void print_language(void)
  *
  *	show_tran
  */
-static void show_tran(tran_t t)
+static void show_tran(regbuf_t* rb, tran_t t)
 {
 	int i;
 
@@ -463,7 +463,7 @@ static void show_tran(tran_t t)
 #ifdef FAST
 		/* find index of the t */
 		for (i = 0; i < NTRAN; i++)
-			if (rbuf.dstates[i] == t)
+			if (rb->dstates[i] == t)
 				break;
 		assert(i < NTRAN);
 #else
@@ -478,26 +478,26 @@ static void show_tran(tran_t t)
  *
  *	print_dtran
  */
-void print_dtran(void)
+void print_dtran(regbuf_t* rb)
 {
 	int	i, j;
 	
 	printf("Dstates for each state:\n");
-	for (i = 0; i <= rbuf.last_state; i++) {
+	for (i = 0; i <= rb->last_state; i++) {
 		printf("%2d:", i);
-		for (j = 0; j <= rbuf.root; j++)
-			if (in_set(rbuf.dstates[i]->set, j))
+		for (j = 0; j <= rb->root; j++)
+			if (in_set(rb->dstates[i]->set, j))
 				printf(" %d", j);
 		printf("\n");
 	}
 	printf("Transition table (default transition is ");
-	show_tran(rbuf.default_tran);
+	show_tran(rb, rb->default_tran);
 	printf("):\n");
-	print_language();
-	for (i = 0; i <= rbuf.last_state; i++) {
+	print_language(rb);
+	for (i = 0; i <= rb->last_state; i++) {
 		printf("%2d: ", i);
-		for (j = 0; j < rbuf.language[0]; j++)
-			show_tran(rbuf.dstates[i]->tran[rbuf.language[j+1]]);
+		for (j = 0; j < rb->language[0]; j++)
+			show_tran(rb, rb->dstates[i]->tran[rb->language[j+1]]);
 		printf("\n");
 	}
 	fflush(stdout);

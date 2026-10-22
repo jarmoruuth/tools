@@ -82,7 +82,7 @@ typedef struct {
 	Also we rely on the fact that the tran_t type conversion will
 	make these values actually very large unsigned values, so that
 	they will be larger than the last pointer allocated to the 
-	rbuf.dstates.
+	rb->dstates.
 */
 #define NSPECIAL	4
 
@@ -106,7 +106,7 @@ typedef struct statestruct state_t;
 */
 typedef state_t*	tran_t;
 
-#define FIRST_STATE	rbuf.dstates[0]
+#define FIRST_STATE	rb->dstates[0]
 
 #else
 
@@ -133,8 +133,18 @@ struct statestruct {
 	unsigned	marked;
 };
 
-/* regular expression buffer structure */
-typedef struct {
+/*
+	Regular expression buffer structure. The dfa states are built
+	while matching, so one regbuf_t must not be used by several
+	threads at the same time. The macros FIRST_STATE, state_of etc.
+	use the regbuf_t pointer rb that must be in scope.
+*/
+#ifndef REGBUF_T_DEFINED
+#define REGBUF_T_DEFINED
+typedef struct regbuf_st regbuf_t;
+#endif
+
+struct regbuf_st {
 	state_t*	dstates[NTRAN];	/* dfa states */
 	set_t**		follow_array;	/* followpositions */
 	int		setsize;	/* position set size */
@@ -150,19 +160,23 @@ typedef struct {
 	char		ignorecase;	/* flag to ignore case */
 	char		search;		/* are we building substring searcher*/
 	char		full;		/* must we get longest possible match*/
-	char		mem_allocated;	/* is there allocated memory in rbuf */
+	char		mem_allocated;	/* is there allocated memory in rb */
 	char		begline;	/* can we match beginning of line */
 	char		endline;	/* can we match end of line */
 	set_t*		tmpstate;	/* temporary working space */
-} regbuf_t;
+};
 
-extern regbuf_t rbuf;
-	
-extern int create_tree(uchar* str);
-extern bool find_regmust(node_t* tree, int root);
-extern bool calcpos(void);
-extern bool dfa(void);
-extern tran_t get_transition(tran_t tran, unsigned input);
+extern int create_tree(regbuf_t* rb, uchar* str);
+extern bool find_regmust(regbuf_t* rb);
+extern bool calcpos(regbuf_t* rb);
+extern bool dfa(regbuf_t* rb);
+extern tran_t get_transition(regbuf_t* rb, tran_t tran, unsigned input);
+
+#ifdef TEST
+extern void show_dfa_report(regbuf_t* rb);
+extern void print_accepting_states(regbuf_t* rb);
+extern void print_dtran(regbuf_t* rb);
+#endif
 
 /**********************************************************************
  *
@@ -175,5 +189,5 @@ extern tran_t get_transition(tran_t tran, unsigned input);
 #ifdef FAST
 #define state_of(_tran)	(_tran)
 #else
-#define state_of(_tran)	(rbuf.dstates[_tran])
+#define state_of(_tran)	(rb->dstates[_tran])
 #endif
