@@ -269,6 +269,33 @@ if grep --version 2>/dev/null | grep -q GNU; then
 			fi
 		done
 	done
+
+	# Random periodic patterns from a two letter alphabet, which
+	# are hard cases for Boyer-Moore jump tables (the old Knuth
+	# delta2 in bm_d012.c failed 12% of these)
+	awk 'BEGIN { srand(7); for (i = 0; i < 3000; i++) {
+		n = 1 + int(rand() * 60); s = ""
+		for (j = 0; j < n; j++) s = s (rand() < 0.7 ? "a" : "b")
+		print s } }' > ab.txt
+	awk 'BEGIN { srand(11); for (i = 0; i < 200; i++) {
+		n = 2 + int(rand() * 22); s = ""
+		for (j = 0; j < n; j++) s = s (rand() < 0.75 ? "a" : "b")
+		print s } }' > abpat.txt
+	nbad=0
+	while read -r pat; do
+		for opts in "" "-i"; do
+			if [ "$(grep -c -F $opts "$pat" < ab.txt)" != \
+			     "$("$D" -c -x $opts "$pat" < ab.txt | tr -d '\r')" ]; then
+				nbad=$((nbad + 1))
+				[ $nbad -le 3 ] && echo "      dgrep -x $opts '$pat'"
+			fi
+		done
+	done < abpat.txt
+	if [ $nbad -eq 0 ]; then
+		pass
+	else
+		fail "periodic patterns: $nbad of 400 counts differ from GNU grep"
+	fi
 fi
 
 ######################################################################

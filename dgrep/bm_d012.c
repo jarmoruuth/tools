@@ -89,36 +89,60 @@ static void make_ccase (bm_t* bm, int iflag)
 /**********************************************************************
  *	build_delta2
  *
- * D.Knuth's linear algorithm to build dd' (delta2).
+ * Builds delta2, the good suffix jump of Boyer and Moore, as the jump
+ * of the text position at the mismatch. This used D.Knuth's linear
+ * algorithm for dd', which is incorrect for some periodic patterns
+ * (W.Rytter 1980); for example 40 a's were not found in a line of 45
+ * a's. Now uses the linear suffixes algorithm from C.Charras and
+ * T.Lecroq: Handbook of Exact String Matching Algorithms.
  */
 static void build_delta2 (bm_t* bm, REG4 char *pat, int patlen)
 {
-	REG1 int	j;
-	REG2 int	t;
-	REG3 int	*f;
+	REG1 int	i;
+	REG2 int	j;
+	REG3 int	*suff;
 	unsigned*	delta2;
+	int		m = patlen;
+	int		f = 0;
+	int		g;
 
-	delta2 = bm->delta2 = malloc((unsigned)patlen * sizeof(unsigned));
+	delta2 = bm->delta2 = malloc((unsigned)m * sizeof(unsigned));
 	if (delta2 == NULL)
 		error("Out of memory", 3);
-	f = malloc(patlen * sizeof(int));
-	if (f == NULL)
+	suff = malloc(m * sizeof(int));
+	if (suff == NULL)
 		error("Out of memory", 3);
-	t = 2 * patlen - 1;
-	for (j = patlen-1; j >= 0; j--)
-		delta2[j] = t - j;
-	t = patlen;
-	j = t - 1;
-	for (; j >= 0; j--, t--) {
-		f[j] = t;
-		while (t < patlen && pat[j] != pat[t]) {
-			delta2[t] = min(delta2[t], patlen-j-1);
-			t = f[t];
+	/* suff[i] is the length of the longest suffix of pat[0..i]
+	   that is also a suffix of pat */
+	suff[m-1] = m;
+	g = m - 1;
+	for (i = m - 2; i >= 0; --i) {
+		if (i > g && suff[i + m - 1 - f] < i - g)
+			suff[i] = suff[i + m - 1 - f];
+		else {
+			if (i < g)
+				g = i;
+			f = i;
+			while (g >= 0 && pat[g] == pat[g + m - 1 - f])
+				--g;
+			suff[i] = f - g;
 		}
 	}
-	for (j = 0; j <= t; j++)
-		delta2[j] = min(delta2[j], patlen+t-j);
-	free(f);
+	/* pattern shift when mismatch is at position j */
+	for (j = 0; j < m; ++j)
+		delta2[j] = m;
+	j = 0;
+	for (i = m - 1; i >= 0; --i)
+		if (suff[i] == i + 1)
+			for (; j < m - 1 - i; ++j)
+				if (delta2[j] == (unsigned)m)
+					delta2[j] = m - 1 - i;
+	for (i = 0; i <= m - 2; ++i)
+		delta2[m - 1 - suff[i]] = m - 1 - i;
+	/* jump of the text position at the mismatch */
+	for (j = 0; j < m; ++j)
+		delta2[j] += m - 1 - j;
+	free(suff);
 }
 
 /***********************************************************************
