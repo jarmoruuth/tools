@@ -1,0 +1,35 @@
+######################################################################
+#
+#	Makefile for lj, rj and calcj in Windows with Visual C++.
+#	Run from a Developer Command Prompt:
+#
+#	nmake -f makefile.win		builds lj.exe, rj.exe and calcj.exe
+#	nmake -f makefile.win test	runs test.sh (needs Git Bash)
+#
+######################################################################
+
+CC	= cl
+CFLAGS	= -nologo -O2 -W3 -std:c11 -D_CRT_SECURE_NO_WARNINGS
+LIBS	= shell32.lib
+
+all: lj.exe rj.exe calcj.exe
+
+lj.exe: lj.obj pdir.obj
+	$(CC) $(CFLAGS) -Felj.exe lj.obj pdir.obj $(LIBS)
+
+rj.exe: rj.obj pdir.obj
+	$(CC) $(CFLAGS) -Ferj.exe rj.obj pdir.obj $(LIBS)
+
+calcj.exe: calcj.obj pdir.obj
+	$(CC) $(CFLAGS) -Fecalcj.exe calcj.obj pdir.obj $(LIBS)
+
+lj.obj rj.obj calcj.obj pdir.obj: pdir.h
+
+.c.obj:
+	$(CC) $(CFLAGS) -c $<
+
+test: lj.exe rj.exe
+	bash test.sh ./lj.exe ./rj.exe
+
+clean:
+	-del *.obj lj.exe rj.exe calcj.exe 2>nul

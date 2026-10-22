@@ -9,6 +9,7 @@
  *	    1.20 20-Nov-1988	library functions and control variables
  *	    1.21 31-Jan-1989	fixed a bug handling float after dot
  *	    2.00 12-Apr-2025	Support for 64 bit integers
+ *	    2.01 22-Oct-2026	Portable to Windows and POSIX
  *
  * Author: Jarmo Ruuth
  *
@@ -18,16 +19,21 @@
 #include <stdlib.h>
 #include <stdint.h> // For int64_t
 #include <string.h>
-#include <dos.h>
+#ifdef _WIN32
+#define stricmp _stricmp
+#else
+#include <strings.h>
+#define stricmp strcasecmp
+#endif
 #include <ctype.h>
 #include <math.h>
 #include <setjmp.h>
-#include <conio.h>
+#include "pdir.h"
 #include <setjmp.h>
 
 #include "../lib/c.h"
 
-static char	version[] = "version 2.00 (64-bit)";
+static char	version[] = "version 2.01 (64-bit)";
 
 typedef double	    calc_t;
 typedef int64_t	    int_t;
@@ -68,34 +74,46 @@ typedef enum {
     SINH,	SQRT,	TAN,	TANH
 } FUNCS;
 
+typedef double	(*fun_t)(void);
+typedef double	(*fun1_t)(double);
+typedef double	(*fun2_t)(double, double);
+
 typedef struct {
     FUNCS	type;
     char	*name;
-    double	(*fun)(double, ...);
+    fun_t	fun;		/* called as fun1_t or fun2_t */
     int	n_args;
 } FUNC;
 
+/* modf(x) returns the fractional part of x */
+static double calc_modf(double x)
+{
+    double	ipart;
+
+    return modf(x, &ipart);
+}
+
 static FUNC funcs[] = {
-    { ACOS,		"acos",		acos,  1 },
-    { ASIN,		"asin",		asin,  1 },
-    { ATAN,		"atan",		atan,  1 },
-    { ATAN2,	"atan2",	atan2, 2 },
-    { CEIL,		"ceil",		ceil,  1 },
-    { COS,		"cos",		cos,   1 },
-    { COSH,		"cosh",		cosh,  1 },
-    { EXP,		"exp",		exp,   1 },
-    { FABS,		"fabs",		fabs,  1 },
-    { FLOOR,	"floor",	floor, 1 },
-    { FMOD,		"fmod",		fmod,  2 },
-    { LOG,		"log",		log,   1 },
-    { LOG10,	"log10",	log10, 1 },
-    { MODF,		"modf",		modf,  2 },
-    { POW,		"pow",		pow,   2 },
-    { SIN,		"sin",		sin,   1 },
-    { SINH,		"sinh",		sinh,  1 },
-    { SQRT,		"sqrt",		sqrt,  1 },
-    { TAN,		"tan",		tan,   1 },
-    { TANH,		"tanh",		tanh,  1 }
+    { ACOS,		"acos",		(fun_t)acos,  1 },
+    { ASIN,		"asin",		(fun_t)asin,  1 },
+    { ATAN,		"atan",		(fun_t)atan,  1 },
+    { ATAN2,	"atan2",	(fun_t)atan2, 2 },
+    { CEIL,		"ceil",		(fun_t)ceil,  1 },
+    { COS,		"cos",		(fun_t)cos,   1 },
+    { COSH,		"cosh",		(fun_t)cosh,  1 },
+    { EXP,		"exp",		(fun_t)exp,   1 },
+    { FABS,		"fabs",		(fun_t)fabs,  1 },
+    { FLOOR,	"floor",	(fun_t)floor, 1 },
+    { FMOD,		"fmod",		(fun_t)fmod,  2 },
+    { LOG,		"log",		(fun_t)log,   1 },
+    { LOG10,	"log10",	(fun_t)log10, 1 },
+    { MODF,		"modf",		(fun_t)calc_modf,  1 },
+    { POW,		"pow",		(fun_t)pow,   2 },
+    { SIN,		"sin",		(fun_t)sin,   1 },
+    { SINH,		"sinh",		(fun_t)sinh,  1 },
+    { SQRT,		"sqrt",		(fun_t)sqrt,  1 },
+    { TAN,		"tan",		(fun_t)tan,   1 },
+    { TANH,		"tanh",		(fun_t)tanh,  1 }
 };
 
 #define	NFUNC	(sizeof(funcs) / sizeof(FUNC))
@@ -143,20 +161,21 @@ static char *lltoa(int_t value, char *str, int base)
    char *p = str;
    char *p1, *p2;
    int negative = 0;
+   uint64_t uvalue = (uint64_t)value;
    if (base < 2 || base > 36) {
       *str = '\0';
       return str;
    }
    if (value < 0) {
       negative = 1;
-      value = -value;
+      uvalue = 0 - uvalue;	/* works also for INT64_MIN */
    }
    /* convert number to string in reverse order */
    do {
-      int remainder = (int)(value % base);
+      int remainder = (int)(uvalue % base);
       *p++ = (remainder < 10) ? '0' + remainder : 'A' + remainder - 10;
-      value /= base;
-   } while (value);
+      uvalue /= base;
+   } while (uvalue);
    if (negative)
       *p++ = '-';
    *p = '\0';
@@ -187,38 +206,23 @@ static void eval_error(char *msg, char *tok)
 
 /**********************************************************************
  *
- *	matherr
+ *	check_math
+ *
+ * Checks the result of a math library function. NaN or infinite
+ * result from finite arguments is an error.
  */
-int matherr (struct _exception *e)
+static calc_t check_math(calc_t result, FUNC *func, calc_t *arg, int n_args)
 {
-    register char *msg;
+    int		i;
 
-    switch (e->type) {
-        case DOMAIN:
-            msg = "Argument domain error (e.g. log(-1)) in %s";
-            break;
-        case SING:
-            msg = "Argument singularity (e.g. pow(0,-2)) in %s";
-            break;
-        case OVERFLOW:
-            msg = "Overflow range error (e.g. exp(1000)) in %s";
-            break;
-        case UNDERFLOW:
-            msg = "Underflow range error (e.g. exp(-1000)) in %s";
-            break;
-        case TLOSS:
-            msg = "Total loss of significance (e.g. sin(10e70)) in %s";
-            break;
-        case PLOSS:
-            msg = "Partial loss of significance in %s";
-            break;
-        default:
-            msg = "Unknown math error in %s";
-            break;
-    }
-    eval_error(msg, e->name);
-        e->retval = 1;
-    return 0;
+    for (i = 0; i < n_args; i++)
+        if (!isfinite(arg[i]))
+            return result;
+    if (isnan(result))
+        eval_error("Argument domain error (e.g. log(-1)) in %s", func->name);
+    if (isinf(result))
+        eval_error("Range error (e.g. exp(1000) or log(0)) in %s", func->name);
+    return result;
 }
 
 /**********************************************************************
@@ -387,14 +391,14 @@ static calc_t digit_token(char *buf)
         // Read as signed number
         int_value = strtoll(buf_start, NULL, 0);
         if (debug) {
-            printf("buf = %s, int_value = %lld\n", buf_start, int_value);
+            printf("buf = %s, int_value = %lld\n", buf_start, (long long)int_value);
         }
         return (calc_t)int_value;
     } else {
         // Read as unsigned number
         int_value = strtoull(buf_start, NULL, 0);
         if (debug) {
-            printf("buf = %s, int_value = %llu\n", buf_start, int_value);
+            printf("buf = %s, int_value = %llu\n", buf_start, (unsigned long long)int_value);
         }
         return (calc_t)int_value;
     }
@@ -718,12 +722,12 @@ static calc_t check_func (void)
         case 1:
             if (debug)
                 printf("call %s(%.4lf)\n", func->name, arg[0]);
-            return (*func->fun)(arg[0]);
+            return check_math(((fun1_t)func->fun)(arg[0]), func, arg, 1);
         case 2:
             if (debug)
                 printf("call %s(%.4lf, %.4lf)\n", func->name,
                     arg[0], arg[1]);
-            return (*func->fun)(arg[0], arg[1]);
+            return check_math(((fun2_t)func->fun)(arg[0], arg[1]), func, arg, 2);
         default:
             eval_error("Internal error: "
                    "unsupported number of arguments in call to %s",
@@ -1179,9 +1183,9 @@ static calc_t eval (char *str)
 
 /**********************************************************************
  *
- *	getline
+ *	get_line
  */
-static char *getline(void)
+static char *get_line(void)
 {
 #ifdef __TURBOC__
     union REGS	rg;
@@ -1203,6 +1207,7 @@ static char *getline(void)
         if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
             exit(1);
         }
+        buffer[strcspn(buffer, "\r\n")] = '\0';
 
         return(buffer);
 #endif
@@ -1239,12 +1244,13 @@ static void show_value (calc_t value, int table_format)
     // 18446744073709551615 = 20 digits
     if (table_format) {
         printf("%12.*lf %8lld 0x%08llX 0%012llo %s\n",
-            digits, value, int_value, int_value,
-            int_value, lltoa(int_value, buffer, base));
+            digits, value, (long long)int_value, (unsigned long long)int_value,
+            (unsigned long long)int_value, lltoa(int_value, buffer, base));
     } else {
         printf("%.*lf %lld %llu  0x%llX 0%llo %s\n",
-            digits, value, int_value, int_value, int_value,
-            int_value, lltoa(int_value, buffer, base));
+            digits, value, (long long)int_value, (unsigned long long)int_value,
+            (unsigned long long)int_value, (unsigned long long)int_value,
+            lltoa(int_value, buffer, base));
     }
 }
 
@@ -1295,7 +1301,7 @@ static int more (char *str)
 
     printf("%s", str);
     printf(" --More--");
-    key = getch();
+    key = pd_getkey();
     printf("\n");
     if (key == CTRL_C)
         exit(-1);
@@ -1395,11 +1401,10 @@ static int check_command (register char *buf)
  *
  *	main
  */
-void main (int argc, char *argv[])
+int main (int argc, char *argv[])
 {
     calc_t		result;
     register char	*buf;
-    int		opt;
 
     init();
     for (int i = 1; i < argc; ++i) {
@@ -1418,7 +1423,7 @@ void main (int argc, char *argv[])
         }
         for (;;) {	/* command loop */
                 printf("> ");
-                if ((buf = getline()) == NULL)
+                if ((buf = get_line()) == NULL)
                     break;
                 while (isspace(*buf))
                     buf++;

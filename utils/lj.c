@@ -2,31 +2,35 @@
  *
  *		LJ.C
  *
- * Unix-like ls for MS-DOS. For more info see usage().
+ * Unix-like ls, originally for MS-DOS. Works in Windows and POSIX
+ * systems. For more info see usage().
  *
  * Return values: 0, if files are found
  *		  1, if no files are found
  *		  2, if errors
- * 
+ *
+ * Version: 1.00 1988		MS-DOS version using filelist library
+ *	    2.00 22-Oct-2026	Portable to Windows and POSIX, 64-bit sizes,
+ *				no limits on file name length or file count
+ *
 \**********************************************************************/
+
+#ifndef _WIN32
+#define _FILE_OFFSET_BITS 64
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dos.h>
-#include <process.h>
-#include <ectype.h>
-#include <sys\types.h>
-#include <sys\stat.h>
+#include <inttypes.h>
+#include <time.h>
 
-#include <c.h>
-#include <filelist.h>
-#include <diruti.h>
-#include <getopt.h>
+#include "pdir.h"
 
-#define SIZE_COLS	3
+#define FALSE	0
+#define TRUE	1
 
-struct {
+static struct {
 	char	reverse;
 	char	timesort;
 	char	long_ls;
@@ -35,26 +39,21 @@ struct {
 	char	all;
 	char	one_column;
 	char	dirs;
+	char	files;
 	char	sizesort;
-} mode = {
-	FALSE,
-	FALSE,
-	FALSE,
-	FALSE,
-	FALSE,
-	FALSE,
-	FALSE,
-	FALSE,
-	FALSE
-};
+} mode;
 
-static char lbuf[20], dbuf[20];
+typedef struct {
+	char		*path;		/* directory, "" for file arguments */
+	pd_entry_t	*items;
+	size_t		len;
+	size_t		max;
+} group_t;
 
-#ifdef __TURBOC__
-
-unsigned _stklen = 16 * 1024;
-
-#endif
+static int	exit_code = 1;		/* no files found */
+static int	ngroups;		/* printed groups */
+static int	headers;		/* print directory headers */
+static int	termwidth;
 
 /**********************************************************************
  *
@@ -64,7 +63,7 @@ static void usage(void)
 {
 	printf(
 "Usage: lj [-adflrRsSt1] [files and directories]\n"
-"Options: -a  list all files\n"
+"Options: -a  list all files, also hidden and dot files\n"
 "         -d  list only directories\n"
 "         -f  list only files\n"
 "         -l  long listing\n"
@@ -74,455 +73,508 @@ static void usage(void)
 "         -S  sort by size\n"
 "         -t  sort by time\n"
 "         -1  one column format\n"
-"If no arguments are given, *.* is assumed\n");
+"If no arguments are given, current directory is listed.\n"
+"Wildcards * and ? are allowed in the last path component. With -R the\n"
+"pattern is matched in all subdirectories; quote it in Unix shells.\n");
 	exit(2);
 }
 
 /**********************************************************************
  *
- *	ls_malloc
+ *	error
  */
-static void *ls_malloc(int size)
+static void error(const char *name, const char *msg)
 {
-	register void *ptr;
-	
-	if ((ptr = malloc(size)) == NULL) {
-		printf("Error: Out of heap space\n");
-		exit(2);
-	}
-	return ptr;
+	fflush(stdout);
+	fprintf(stderr, "lj: %s: %s\n", name, msg);
+	exit_code = 2;
 }
 
 /**********************************************************************
  *
- *	name_cmp 
+ *	name_cmp
  */
-static int name_cmp(INFOITEM **p1, INFOITEM **p2)
+static int name_cmp(const void *v1, const void *v2)
 {
-	register int	retval;
+	const pd_entry_t	*p1 = v1;
+	const pd_entry_t	*p2 = v2;
+	int			retval;
 
-	retval = strcmp((*p1)->name, (*p2)->name);
+	retval = pd_namecmp(p1->name, p2->name);
 	return mode.reverse ? -retval : retval;
 }
 
 /**********************************************************************
  *
- *	sort_by_name
+ *	size_cmp
  */
-static void sort_by_name(INFOITEM **ii, int len)
+static int size_cmp(const void *v1, const void *v2)
 {
-	qsort(ii, len, sizeof(INFOITEM **), name_cmp);
-}
+	const pd_entry_t	*p1 = v1;
+	const pd_entry_t	*p2 = v2;
+	int			retval;
 
-/**********************************************************************
- *
- *	size_cmp 
- */
-static int size_cmp(INFOITEM **p1, INFOITEM **p2)
-{
-	register int	retval;
-	long		diff;
-
-	diff = (*p1)->size - (*p2)->size;
-	if (diff > 0)
-		retval = 1;
-	else if (diff < 0)
-		retval = -1;
-	else
-		retval = 0;
+	retval = (p1->size > p2->size) - (p1->size < p2->size);
 	return retval ? (mode.reverse ? retval : -retval)
-		      : name_cmp(p1, p2);
+		      : name_cmp(v1, v2);
 }
 
 /**********************************************************************
  *
- *	sort_by_size
+ *	time_cmp
  */
-static void sort_by_size(INFOITEM **ii, int len)
+static int time_cmp(const void *v1, const void *v2)
 {
-	qsort(ii, len, sizeof(INFOITEM **), size_cmp);
-}
+	const pd_entry_t	*p1 = v1;
+	const pd_entry_t	*p2 = v2;
+	int			retval;
 
-/**********************************************************************
- *
- *	time_cmp 
- */
-static int time_cmp(INFOITEM **pp1, INFOITEM **pp2)
-{
-	register INFOITEM	*p1 = *pp1;
-	INFOITEM		*p2 = *pp2;
-	register int		retval;
-
-	if (!(retval = p1->year - p2->year)
-	    && !(retval = p1->month - p2->month)
-	    && !(retval = p1->day - p2->day)
-	    && !(retval = p1->hour - p2->hour)
-	    && !(retval = p1->min - p2->min))
-		retval = p1->sec - p2->sec;
+	retval = (p1->mtime > p2->mtime) - (p1->mtime < p2->mtime);
 	return retval ? (mode.reverse ? retval : -retval)
-		      : name_cmp(pp1, pp2);
-}
-
-/**********************************************************************
- *
- *	sort_by_time 
- */
-static void sort_by_time(INFOITEM **ii, int len)
-{
-	qsort(ii, len, sizeof(INFOITEM **), time_cmp);
+		      : name_cmp(v1, v2);
 }
 
 /**********************************************************************
  *
  *	ultos
+ *
+ * Formats a number with thousand separators.
  */
-static char *ultos(ulong l, char *buf)
+static char *ultos(uint64_t l, char *buf)
 {
-	ulong		tmp;
-	int 		output = 0;
-	char		*bp = buf;
+	char	tmp[32];
+	int	len, i;
+	char	*bp = buf;
 
-	if (tmp = l / 1000000000UL) {
-		bp += sprintf(bp, "%lu,", tmp);
-		output = 1;
+	len = sprintf(tmp, "%" PRIu64, l);
+	for (i = 0; i < len; i++) {
+		if (i > 0 && (len - i) % 3 == 0)
+			*bp++ = ',';
+		*bp++ = tmp[i];
 	}
-	l -= tmp * 1000000000UL;
-	tmp = l / 1000000UL;
-	if (output || tmp) {
-		bp += sprintf(bp, output ? "%03lu," : "%lu,", tmp);
-		output = 1;
-	}
-	l -= tmp * 1000000UL;
-	tmp = l / 1000UL;
-	if (output || tmp) {
-		bp += sprintf(bp, output ? "%03lu," : "%lu,", tmp);
-		output = 1;
-	}
-	l -= tmp * 1000UL;
-	sprintf(bp, output ? "%03lu" : "%lu", l);
+	*bp = '\0';
 	return buf;
 }
 
 /**********************************************************************
  *
- *	short_ls 
+ *	print_padded
  */
-static void short_ls(register INFOITEM **ii, int len)
+static void print_padded(const char *s, size_t width)
 {
-        int maxnamelen = 0;
-	int i, m;
-	register unsigned* p;
-        int name_cols;
-        char format[20];
+	size_t	w = pd_strwidth(s);
+
+	fputs(s, stdout);
+	for (; w < width; w++)
+		putchar(' ');
+}
+
+/**********************************************************************
+ *
+ *	short_ls
+ *
+ * Lists names in columns sorted down the columns. With -s also
+ * the size of each file is shown.
+ */
+static void short_ls(pd_entry_t *ii, size_t len)
+{
+	size_t	maxnamelen = 0;
+	size_t	maxsizelen = 0;
+	size_t	i, w, rows, cols, r, c;
+	char	buf[32];
 
 	if (mode.one_column) {
-		for (; len--; ii++)
-			printf("%s\n", (*ii)->name);
+		for (i = 0; i < len; i++)
+			printf("%s\n", ii[i].name);
 		return;
 	}
-        for (i = 0; i < len; i++) {
-            if (strlen(ii[i]->name) > maxnamelen) {
-                maxnamelen = strlen(ii[i]->name);
-            }
-        }
-        name_cols = 79 / (maxnamelen + 1);
-        if (name_cols < 1) {
-            name_cols = 1;
-        }
-        p = ls_malloc(sizeof(unsigned) * (name_cols + 1));
-	m = len / name_cols + 1;
-	p[0] = 0;
-	for (i=1; i < name_cols; i++) {
-		p[i] = p[i-1] + m;
-		if (p[i] >= len)
-			p[i] = len;
+	for (i = 0; i < len; i++) {
+		if ((w = pd_strwidth(ii[i].name)) > maxnamelen)
+			maxnamelen = w;
+		if (mode.sizes
+		    && (w = strlen(ultos(ii[i].size, buf))) > maxsizelen)
+			maxsizelen = w;
 	}
-        p[name_cols] = len;
-	i = m;
-        sprintf(format, "%%-%ds ", maxnamelen);
-	while (i-- > 0) {
-            int j;
-            for (j = 0; j < name_cols; j++) {
-                printf(format, p[j] < p[j+1] ? ii[p[j]++]->name : "");
-            }
-            printf("\n");
-        }
-}
-
-/**********************************************************************
- *
- *	size_ls 
- */
-static void size_ls(register INFOITEM **ii, int len)
-{
-        int maxnamelen = 0;
-        int maxsizelen;
-        long maxsize = 0;
-	int i, m;
-	register unsigned* p;
-        int name_cols;
-        char format[20];
-	char buf[20];
-
-	if (mode.one_column) {
-		for (; len--; ii++)
-			printf("%s\n", (*ii)->name);
-		return;
-	}
-        for (i = 0; i < len; i++) {
-            if (strlen(ii[i]->name) > maxnamelen) {
-                maxnamelen = strlen(ii[i]->name);
-            }
-            if (ii[i]->size > maxsize) {
-                maxsize = ii[i]->size;
-            }
-        }
-        ultos(maxsize, buf);
-        maxsizelen = strlen(buf);
-        name_cols = 79 / (maxnamelen + maxsizelen + 2);
-        if (name_cols < 1) {
-            name_cols = 1;
-        }
-        p = ls_malloc(sizeof(unsigned) * (name_cols + 1));
-	m = len / name_cols + 1;
-	p[0] = 0;
-	for (i=1; i < name_cols; i++) {
-		p[i] = p[i-1] + m;
-		if (p[i] >= len)
-			p[i] = len;
-	}
-        p[name_cols] = len;
-	i = m;
-        sprintf(format, " %%%ds %%-%ds", maxsizelen, maxnamelen);
-	while (i-- > 0) {
-            int j;
-            for (j = 0; j < name_cols; j++) {
-                if (p[j] < p[j+1]) {
-                    printf(format,
-                        ultos(ii[p[j]]->size, buf),
-                        ii[p[j]]->name);
-                    p[j]++;
-                } else {
-                    printf(format, "", "");
-                }
-            }
-            printf("\n");
-        }
-}
-
-/**********************************************************************
- *
- *	long_ls 
- */
-static void long_ls(INFOITEM **ipp, int len)
-{
-	register int		attr;
-	register INFOITEM	*ip;
-	
-	for (; len-- > 0; ipp++) {
-		ip = *ipp;
-		attr = ip->attr;
-		printf("%c%c%c%c%c%c  %11s  %2u.%02u.%04u  %2u:%02u  %s\n",
-			attr&DI_DIREC  ? 'd' : '-',
-			attr&DI_ARCH   ? 'a' : '-',
-			attr&DI_SYSTEM ? 's' : '-',
-			attr&DI_HIDDEN ? 'h' : '-',
-			'r',
-			attr&DI_RDONLY ? '-' : 'w',
-			ultos(ip->size, lbuf),
-			ip->day,
-			ip->month,
-			ip->year,
-			ip->hour,
-			ip->min,
-			ip->name);
-	}
-}
-
-/**********************************************************************
- *
- *	select_ls 
- */
-static void select_ls(register INFOITEM **ii, register int len)
-{
-	if (len < 1)
-		return;
-	/* Sort files */
-	if (mode.timesort)
-		sort_by_time(ii, len);
-	else if (mode.sizesort)
-		sort_by_size(ii, len);
-	else
-		sort_by_name(ii, len);
-	/* Select correct display format */
-	if (mode.long_ls)
-		long_ls(ii, len);
-	else if (mode.sizes)
-		size_ls(ii, len);
-	else
-		short_ls(ii, len);
-}	
-
-/**********************************************************************
- *
- *	ls
- */
-static int ls(INFOLIST *il)
-{
-	register int		i;
-	int			len, nfiles, count = 0;
-	INFOITEM		**iip;
-	register INFOITEM	**iitmp;
-	char			*path;
-	ulong			size;
-	int			disk;
-	
-	if (il == NULL || il->info == NULL)
-		return 2;
-	if ((len = il->len) < 1)
-		return 1;
-	iip = iitmp = il->info;
-	for (i = 0; i < len; iip = iitmp) {
-		if (!mode.all)
-			for (; i < len && (*iip)->name[0] == '.'; i++, iip++)
-				;
-		if (i == len)
-			break;
-		for (nfiles = 0, size = 0, iitmp = iip, path = (*iitmp)->path;
-		     i < len && strcmp(path, (*iitmp)->path) == 0; 
-		     i++, nfiles++, size += (*iitmp)->size, iitmp++)
-			if ((*iitmp)->attr & DI_DIREC)
-				strcat((*iitmp)->name, "\\");
-		if (path[1] == ':')
-			disk = tolower(path[0]) - 'a' + 1;
-		else
-			disk = 0;
-		if (count++ || i < len) {
-			if (path[1] && !(path[1] == ':' && path[2] && !path[3]))
-				path[strlen(path)-1] = '\0';
-			printf("%s:\n", path);
+	w = maxnamelen + 1 + (mode.sizes ? maxsizelen + 2 : 0);
+	cols = (termwidth - 1) / w;
+	if (cols < 1)
+		cols = 1;
+	rows = (len + cols - 1) / cols;
+	cols = (len + rows - 1) / rows;
+	for (r = 0; r < rows; r++) {
+		for (c = 0; c < cols && (i = c * rows + r) < len; c++) {
+			if (mode.sizes)
+				printf(" %*s ", (int)maxsizelen,
+				       ultos(ii[i].size, buf));
+			if (c + 1 < cols && (c + 1) * rows + r < len)
+				print_padded(ii[i].name, maxnamelen + 1);
+			else
+				fputs(ii[i].name, stdout);
 		}
-		select_ls (iip, nfiles);
-		if (!mode.one_column)
-			printf("%s bytes in %u files, %s bytes free\n", 
-				ultos(size, lbuf), nfiles, 
-				ultos(u_getdiskfree(disk), dbuf));
-		if (i < len)
-			printf("\n");
-		
+		putchar('\n');
 	}
-	return 0;
+}
+
+/**********************************************************************
+ *
+ *	attr_string
+ */
+static char *attr_string(pd_entry_t *ip, char *buf)
+{
+#ifdef _WIN32
+	sprintf(buf, "%c%c%c%c%c%c",
+		ip->is_link ? 'l' : ip->is_dir ? 'd' : '-',
+		ip->archive  ? 'a' : '-',
+		ip->system   ? 's' : '-',
+		ip->hidden && !ip->system ? 'h' : '-',
+		'r',
+		ip->readonly ? '-' : 'w');
+#else
+	static const char rwx[] = "rwxrwxrwx";
+	unsigned	m = ip->mode;
+	int		i;
+
+	buf[0] = ip->is_link ? 'l' : ip->is_dir ? 'd' : '-';
+	for (i = 0; i < 9; i++)
+		buf[i+1] = (m & (0400 >> i)) ? rwx[i] : '-';
+	buf[10] = '\0';
+#endif
+	return buf;
+}
+
+/**********************************************************************
+ *
+ *	long_ls
+ */
+static void long_ls(pd_entry_t *ii, size_t len)
+{
+	size_t		i, w, maxsizelen = 0;
+	char		attr[16], buf[32];
+	time_t		t;
+	struct tm	*tm;
+	struct tm	zero;
+
+	for (i = 0; i < len; i++)
+		if ((w = strlen(ultos(ii[i].size, buf))) > maxsizelen)
+			maxsizelen = w;
+	memset(&zero, 0, sizeof(zero));
+	for (i = 0; i < len; i++) {
+		t = (time_t)ii[i].mtime;
+		if ((tm = localtime(&t)) == NULL)
+			tm = &zero;
+		printf("%s  %*s  %2d.%02d.%04d  %2d:%02d  %s\n",
+			attr_string(&ii[i], attr),
+			(int)maxsizelen,
+			ultos(ii[i].size, buf),
+			tm->tm_mday,
+			tm->tm_mon + 1,
+			tm->tm_year + 1900,
+			tm->tm_hour,
+			tm->tm_min,
+			ii[i].name);
+	}
+}
+
+/**********************************************************************
+ *
+ *	add_item
+ */
+static void add_item(group_t *g, pd_entry_t *e, const char *name)
+{
+	pd_entry_t	*ip;
+	size_t		len = strlen(name);
+
+	if (g->len == g->max) {
+		g->max = g->max ? 2 * g->max : 64;
+		g->items = pd_realloc(g->items, g->max * sizeof(pd_entry_t));
+	}
+	ip = &g->items[g->len++];
+	*ip = *e;
+	/* room for the directory slash */
+	ip->name = memcpy(pd_malloc(len + 2), name, len + 1);
+	if (ip->is_dir)
+		strcat(ip->name, PD_SLASHSTR);
+}
+
+/**********************************************************************
+ *
+ *	free_group
+ */
+static void free_group(group_t *g)
+{
+	size_t	i;
+
+	for (i = 0; i < g->len; i++)
+		free(g->items[i].name);
+	free(g->items);
+	g->items = NULL;
+	g->len = g->max = 0;
+}
+
+/**********************************************************************
+ *
+ *	selected
+ *
+ * Checks if entry is selected by -a, -d and -f options.
+ */
+static int selected(pd_entry_t *e)
+{
+	if (!mode.all && (e->hidden || e->name[0] == '.'))
+		return FALSE;
+	if (mode.dirs && !e->is_dir)
+		return FALSE;
+	if (mode.files && e->is_dir)
+		return FALSE;
+	return TRUE;
+}
+
+/**********************************************************************
+ *
+ *	print_group
+ */
+static void print_group(group_t *g, const char *diskpath)
+{
+	size_t		i;
+	uint64_t	size = 0;
+	int64_t		diskfree;
+	char		buf[32];
+
+	if (g->len == 0)
+		return;
+	exit_code = exit_code == 2 ? 2 : 0;
+	if (ngroups++ > 0)
+		putchar('\n');
+	if (headers && *g->path != '\0')
+		printf("%s:\n", g->path);
+	if (mode.timesort)
+		qsort(g->items, g->len, sizeof(pd_entry_t), time_cmp);
+	else if (mode.sizesort)
+		qsort(g->items, g->len, sizeof(pd_entry_t), size_cmp);
+	else
+		qsort(g->items, g->len, sizeof(pd_entry_t), name_cmp);
+	if (mode.long_ls)
+		long_ls(g->items, g->len);
+	else
+		short_ls(g->items, g->len);
+	if (!mode.one_column) {
+		for (i = 0; i < g->len; i++)
+			size += g->items[i].size;
+		printf("%s bytes in %lu files", ultos(size, buf),
+		       (unsigned long)g->len);
+		if ((diskfree = pd_diskfree(diskpath)) >= 0)
+			printf(", %s bytes free", ultos(diskfree, buf));
+		putchar('\n');
+	}
+}
+
+/**********************************************************************
+ *
+ *	subdir_cmp
+ */
+static int subdir_cmp(const void *v1, const void *v2)
+{
+	return pd_namecmp(*(char *const *)v1, *(char *const *)v2);
+}
+
+/**********************************************************************
+ *
+ *	ls_dir
+ *
+ * Lists files matching pattern in directory dir, recursively
+ * if required. Empty dir means current directory.
+ */
+static void ls_dir(const char *dir, const char *pattern)
+{
+	pd_dir_t	*d;
+	pd_entry_t	e;
+	group_t		g;
+	char		**subdirs = NULL;
+	size_t		nsubdirs = 0, maxsubdirs = 0, i;
+
+	if ((d = pd_opendir(dir)) == NULL) {
+		error(*dir ? dir : ".", pd_strerror());
+		return;
+	}
+	memset(&g, 0, sizeof(g));
+	g.path = *dir ? (char *)dir : ".";
+	while (pd_readdir(d, &e)) {
+		if (pd_match(pattern, e.name) && selected(&e))
+			add_item(&g, &e, e.name);
+		if (mode.recurse && e.is_dir && !e.is_link
+		    && (mode.all || !(e.hidden || e.name[0] == '.'))) {
+			if (nsubdirs == maxsubdirs) {
+				maxsubdirs = maxsubdirs ? 2 * maxsubdirs : 16;
+				subdirs = pd_realloc(subdirs,
+						maxsubdirs * sizeof(char *));
+			}
+			subdirs[nsubdirs++] = pd_join(dir, e.name);
+		}
+	}
+	pd_closedir(d);
+	print_group(&g, dir);
+	free_group(&g);
+	if (nsubdirs > 0) {
+		qsort(subdirs, nsubdirs, sizeof(char *), subdir_cmp);
+		if (mode.reverse)
+			for (i = 0; i < nsubdirs / 2; i++) {
+				char *tmp = subdirs[i];
+				subdirs[i] = subdirs[nsubdirs-1-i];
+				subdirs[nsubdirs-1-i] = tmp;
+			}
+		for (i = 0; i < nsubdirs; i++) {
+			ls_dir(subdirs[i], pattern);
+			free(subdirs[i]);
+		}
+	}
+	free(subdirs);
+}
+
+/**********************************************************************
+ *
+ *	strip_slashes
+ *
+ * Removes trailing slashes but keeps root directory as it is.
+ */
+static char *strip_slashes(char *path)
+{
+	size_t	len = strlen(path);
+	size_t	min = 1;
+
+#ifdef _WIN32
+	if (len >= 2 && path[1] == ':')
+		min = 3;
+#endif
+	while (len > min && PD_ISSLASH(path[len-1]))
+		path[--len] = '\0';
+	return path;
+}
+
+/**********************************************************************
+ *
+ *	split_pattern
+ *
+ * Splits wildcard argument to directory and pattern.
+ */
+static void split_pattern(char *arg, char **dir, char **pattern)
+{
+	char	*base = pd_basename(arg);
+	size_t	dirlen = base - arg;
+
+	*pattern = base;
+	*dir = memcpy(pd_malloc(dirlen + 1), arg, dirlen);
+	(*dir)[dirlen] = '\0';
+	strip_slashes(*dir);
+}
+
+/**********************************************************************
+ *
+ *	is_dir_arg
+ *
+ * Checks if a command line argument is a directory. A link to
+ * a directory is listed as a directory.
+ */
+static int is_dir_arg(const char *path, pd_entry_t *e)
+{
+	pd_dir_t	*d;
+
+	if (!e->is_link)
+		return e->is_dir;
+	if ((d = pd_opendir(path)) == NULL)
+		return FALSE;
+	pd_closedir(d);
+	return TRUE;
 }
 
 /**********************************************************************
  *
  *	get_args
- *
- * Get argumets and return search attribute.
  */
 static int get_args(int argc, char *argv[])
 {
-	register int	c;
-	register int	search_attribute = DI_NORMAL | DI_DIREC;
-	
-	while ((c = getopt(argc, argv, "adflrRsSt1")) != EOF) {
-		switch (c) {
-			case 'a':
-				mode.all = TRUE;
-				search_attribute |=
-					(DI_RDONLY | DI_HIDDEN | DI_SYSTEM);
-				break;
-			case 'f':
-				search_attribute &= ~DI_DIREC;
-				break;
-			case 'd':
-				mode.dirs = TRUE;
-				break;
-			case 'l':
-				mode.long_ls = TRUE;
-				break;
-			case 'r':
-				mode.reverse = TRUE;
-				break;
-			case 'R':
-				mode.recurse = TRUE;
-				break;
-			case 's':
-				mode.sizes = TRUE;
-				break;
-			case 'S':
-				mode.sizesort = TRUE;
-				break;
-			case 't':
-				mode.timesort = TRUE;
-				break;
-			case '1':
-				mode.one_column = TRUE;
-				break;
-			default:
-				usage();
+	int	i;
+	char	*p;
+
+	for (i = 1; i < argc && argv[i][0] == '-' && argv[i][1] != '\0'; i++) {
+		if (strcmp(argv[i], "--") == 0)
+			return i + 1;
+		for (p = argv[i] + 1; *p != '\0'; p++) {
+			switch (*p) {
+				case 'a': mode.all = TRUE; break;
+				case 'd': mode.dirs = TRUE; break;
+				case 'f': mode.files = TRUE; break;
+				case 'l': mode.long_ls = TRUE; break;
+				case 'r': mode.reverse = TRUE; break;
+				case 'R': mode.recurse = TRUE; break;
+				case 's': mode.sizes = TRUE; break;
+				case 'S': mode.sizesort = TRUE; break;
+				case 't': mode.timesort = TRUE; break;
+				case '1': mode.one_column = TRUE; break;
+				default:
+					usage();
+			}
 		}
 	}
-	return search_attribute;
+	return i;
 }
 
 /**********************************************************************
  *
- *	SLASH
- */
-#define SLASH(s)	((s) == '\\' || (s) == '/')
-
-/**********************************************************************
+ *	main
  *
- *	APPEND
+ * File arguments are listed first, then directories and patterns
+ * in the order given.
  */
-#define APPEND(s1, s1len, s2, s2len) \
-	strcat(strcpy(ls_malloc(s1len + s2len + 1), s1), s2)
-
-/**********************************************************************
- *
- *	check_dir
- */
-static char *check_dir(register char *s)
+int main(int argc, char *argv[])
 {
-	struct stat	st;
-	register int	len;
-	
-	if (strpbrk(s, "*?") != NULL)
-		return s;
-	len = strlen(s);
-	if ((len == 1 && SLASH(s[0]))
-	    || (s[1] == ':' && (len == 2
-	    			|| (len == 3 && SLASH(s[2])))))
-		return APPEND(s, len, "*.*", 3);
-	else if (stat(s, &st) == 0 && st.st_mode & S_IFDIR)
-		return APPEND(s, len, "\\*.*", 4);
-	else
-		return s;
-}
+	int		i, first;
+	group_t		files;
+	pd_entry_t	e;
+	char		*dir, *pattern;
+	char		**args;
+	static char	*dot[] = { "" };
 
-/**********************************************************************
- *
- *	main 
- */
-int main(register int argc, register char *argv[])
-{
-	int	count, firstfile;
-	int	search_attribute;
-
-	search_attribute = get_args(argc, argv);
-	firstfile = optind;
-	count = argc - optind;
-	if  (count < 1) {
-		argv[optind] = "*.*";
-		count = 1;
-	} else
-		for (; optind < argc; optind++)
-			argv[optind] = check_dir(argv[optind]);
-	return mode.dirs
-		? ls(read_info_no_sort_dirs_only(count, &argv[firstfile], 
-			search_attribute, mode.recurse))
-		: ls(read_info_no_sort(count, &argv[firstfile], 
-			search_attribute, mode.recurse))
-		;
+	pd_init(&argc, &argv);
+	setvbuf(stdout, NULL, _IOFBF, 64 * 1024);
+	termwidth = pd_termwidth();
+	first = get_args(argc, argv);
+	args = argv + first;
+	argc -= first;
+	if (argc < 1) {
+		args = dot;
+		argc = 1;
+	}
+	headers = argc > 1 || mode.recurse;
+	memset(&files, 0, sizeof(files));
+	files.path = "";
+	for (i = 0; i < argc; i++) {
+		if (pd_haswild(args[i]) || *args[i] == '\0')
+			continue;
+		if (pd_stat(args[i], &e) != 0) {
+			error(args[i], pd_strerror());
+			args[i] = NULL;
+		} else if (!is_dir_arg(args[i], &e)) {
+			/* named files are listed even if hidden */
+			if (!mode.dirs)
+				add_item(&files, &e, args[i]);
+			args[i] = NULL;
+		}
+	}
+	print_group(&files, "");
+	free_group(&files);
+	for (i = 0; i < argc; i++) {
+		if (args[i] == NULL)
+			continue;
+		if (pd_haswild(args[i])) {
+			split_pattern(args[i], &dir, &pattern);
+			if (pd_haswild(dir))
+				error(args[i], "wildcards are allowed only "
+				      "in the last path component");
+			else
+				ls_dir(dir, pattern);
+			free(dir);
+		} else
+			ls_dir(strip_slashes(args[i]), "*");
+	}
+	fflush(stdout);
+	return exit_code;
 }
