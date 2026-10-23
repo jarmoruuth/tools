@@ -3,7 +3,7 @@
  *	PDIR.H
  *
  * Portable directory, file and console utilities for Windows and
- * POSIX systems. Used by lj, rj and calcj. All file names are UTF-8
+ * POSIX systems. Used by lj, rj, cj and calcj. All file names are UTF-8
  * strings. In Windows the wide character API is used internally, so
  * any file name and paths longer than MAX_PATH work.
  *
@@ -36,9 +36,11 @@ typedef struct {
 	unsigned	mode;		/* POSIX st_mode, 0 in Windows */
 	uint64_t	size;
 	int64_t		mtime;		/* modification time, seconds since 1970 */
+	long		mtime_ns;	/* nanoseconds part of mtime */
 } pd_entry_t;
 
 typedef struct pd_dir pd_dir_t;
+typedef struct pd_file pd_file_t;
 
 void		pd_init(int *argc, char ***argv);
 void		*pd_malloc(size_t size);
@@ -55,6 +57,14 @@ pd_dir_t	*pd_opendir(const char *path);
 int		pd_readdir(pd_dir_t *dir, pd_entry_t *entry);
 void		pd_closedir(pd_dir_t *dir);
 int		pd_stat(const char *path, pd_entry_t *entry);
+int		pd_stat_follow(const char *path, pd_entry_t *entry);
+int		pd_samefile(const char *path1, const char *path2);
+
+pd_file_t	*pd_open(const char *path);
+pd_file_t	*pd_create(const char *path);
+int		pd_read(pd_file_t *f, void *buf, int size);
+int		pd_write(pd_file_t *f, const void *buf, int size);
+int		pd_close(pd_file_t *f, const pd_entry_t *attr);
 
 int		pd_remove(const char *path);
 int		pd_rmdir(const char *path);

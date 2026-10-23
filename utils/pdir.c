@@ -393,6 +393,8 @@ static void set_entry(pd_entry_t *e, DWORD attr, DWORD reparse_tag,
 	e->mode = 0;
 	e->size = e->is_dir ? 0 : size;
 	e->mtime = filetime_to_unix(mtime);
+	e->mtime_ns = (long)((((int64_t)mtime.dwHighDateTime << 32)
+			      | mtime.dwLowDateTime) % 10000000) * 100;
 }
 
 /**********************************************************************
@@ -496,6 +498,206 @@ int pd_stat(const char *path, pd_entry_t *e)
 		  ((uint64_t)fa.nFileSizeHigh << 32) | fa.nFileSizeLow,
 		  fa.ftLastWriteTime);
 	return 0;
+}
+
+/**********************************************************************
+ *
+ *	file_info
+ *
+ * Gets info of the file path points to, links are followed.
+ */
+static int file_info(const char *path, BY_HANDLE_FILE_INFORMATION *fi)
+{
+	wchar_t	*w = wpath(path);
+	HANDLE	h;
+	BOOL	ok;
+
+	h = CreateFileW(w, FILE_READ_ATTRIBUTES,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+	ok = h != INVALID_HANDLE_VALUE && GetFileInformationByHandle(h, fi);
+	if (!ok)
+		last_error = GetLastError();
+	if (h != INVALID_HANDLE_VALUE)
+		CloseHandle(h);
+	free(w);
+	return ok ? 0 : -1;
+}
+
+/**********************************************************************
+ *
+ *	pd_stat_follow
+ *
+ * Like pd_stat, but links are followed.
+ */
+int pd_stat_follow(const char *path, pd_entry_t *e)
+{
+	BY_HANDLE_FILE_INFORMATION	fi;
+
+	if (file_info(path, &fi) != 0)
+		return -1;
+	e->name = pd_basename(path);
+	set_entry(e, fi.dwFileAttributes, 0,
+		  ((uint64_t)fi.nFileSizeHigh << 32) | fi.nFileSizeLow,
+		  fi.ftLastWriteTime);
+	return 0;
+}
+
+/**********************************************************************
+ *
+ *	pd_samefile
+ *
+ * Returns 1 if both paths exist and are the same file.
+ */
+int pd_samefile(const char *path1, const char *path2)
+{
+	BY_HANDLE_FILE_INFORMATION	fi1, fi2;
+
+	if (file_info(path1, &fi1) != 0 || file_info(path2, &fi2) != 0)
+		return 0;
+	/* some network file systems do not have file indexes */
+	if (fi1.nFileIndexHigh == 0 && fi1.nFileIndexLow == 0)
+		return 0;
+	return fi1.dwVolumeSerialNumber == fi2.dwVolumeSerialNumber
+	       && fi1.nFileIndexHigh == fi2.nFileIndexHigh
+	       && fi1.nFileIndexLow == fi2.nFileIndexLow;
+}
+
+struct pd_file {
+	HANDLE	handle;
+	wchar_t	*path;
+};
+
+/**********************************************************************
+ *
+ *	new_file
+ */
+static pd_file_t *new_file(HANDLE h, wchar_t *w)
+{
+	pd_file_t	*f;
+
+	if (h == INVALID_HANDLE_VALUE) {
+		last_error = GetLastError();
+		free(w);
+		return NULL;
+	}
+	f = pd_malloc(sizeof(pd_file_t));
+	f->handle = h;
+	f->path = w;
+	return f;
+}
+
+/**********************************************************************
+ *
+ *	pd_open
+ *
+ * Opens a file for reading.
+ */
+pd_file_t *pd_open(const char *path)
+{
+	wchar_t	*w = wpath(path);
+
+	return new_file(CreateFileW(w, GENERIC_READ,
+			FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+			NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL), w);
+}
+
+/**********************************************************************
+ *
+ *	pd_create
+ *
+ * Creates a new file or truncates an existing one for writing.
+ * OPEN_ALWAYS is used, as CREATE_ALWAYS fails for hidden files.
+ */
+pd_file_t *pd_create(const char *path)
+{
+	wchar_t		*w = wpath(path);
+	pd_file_t	*f;
+
+	f = new_file(CreateFileW(w, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+				 OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL
+				 |FILE_FLAG_SEQUENTIAL_SCAN, NULL), w);
+	if (f != NULL && !SetEndOfFile(f->handle)) {
+		last_error = GetLastError();
+		CloseHandle(f->handle);
+		free(f->path);
+		free(f);
+		return NULL;
+	}
+	return f;
+}
+
+/**********************************************************************
+ *
+ *	pd_read
+ *
+ * Returns the number of bytes read, 0 at end of file or -1.
+ */
+int pd_read(pd_file_t *f, void *buf, int size)
+{
+	DWORD	n;
+
+	if (!ReadFile(f->handle, buf, size, &n, NULL)) {
+		last_error = GetLastError();
+		return -1;
+	}
+	return (int)n;
+}
+
+/**********************************************************************
+ *
+ *	pd_write
+ *
+ * Returns size or -1.
+ */
+int pd_write(pd_file_t *f, const void *buf, int size)
+{
+	DWORD	n;
+
+	if (!WriteFile(f->handle, buf, size, &n, NULL)) {
+		last_error = GetLastError();
+		return -1;
+	}
+	if ((int)n != size) {
+		last_error = ERROR_DISK_FULL;
+		return -1;
+	}
+	return size;
+}
+
+/**********************************************************************
+ *
+ *	pd_close
+ *
+ * Closes the file. If attr is not NULL, sets the file time from it
+ * and the read-only attribute, if it is set in attr.
+ */
+int pd_close(pd_file_t *f, const pd_entry_t *attr)
+{
+	FILETIME	ft;
+	int64_t		t;
+	DWORD		a;
+	int		rc = 0;
+
+	if (attr != NULL) {
+		t = (attr->mtime + 11644473600LL) * 10000000
+		    + attr->mtime_ns / 100;
+		ft.dwLowDateTime = (DWORD)t;
+		ft.dwHighDateTime = (DWORD)(t >> 32);
+		SetFileTime(f->handle, NULL, NULL, &ft);
+	}
+	if (!CloseHandle(f->handle)) {
+		last_error = GetLastError();
+		rc = -1;
+	}
+	if (rc == 0 && attr != NULL && attr->readonly) {
+		a = GetFileAttributesW(f->path);
+		if (a != INVALID_FILE_ATTRIBUTES)
+			SetFileAttributesW(f->path, a|FILE_ATTRIBUTE_READONLY);
+	}
+	free(f->path);
+	free(f);
+	return rc;
 }
 
 /**********************************************************************
@@ -672,6 +874,7 @@ static void set_entry(pd_entry_t *e, const char *name, struct stat *st)
 	e->mode = st->st_mode;
 	e->size = e->is_dir ? 0 : (uint64_t)st->st_size;
 	e->mtime = st->st_mtime;
+	e->mtime_ns = st->st_mtim.tv_nsec;
 }
 
 /**********************************************************************
@@ -750,6 +953,154 @@ int pd_stat(const char *path, pd_entry_t *e)
 	}
 	set_entry(e, pd_basename(path), &st);
 	return 0;
+}
+
+/**********************************************************************
+ *
+ *	pd_stat_follow
+ *
+ * Like pd_stat, but links are followed.
+ */
+int pd_stat_follow(const char *path, pd_entry_t *e)
+{
+	struct stat	st;
+
+	if (stat(path, &st) != 0) {
+		last_errno = errno;
+		return -1;
+	}
+	set_entry(e, pd_basename(path), &st);
+	return 0;
+}
+
+/**********************************************************************
+ *
+ *	pd_samefile
+ *
+ * Returns 1 if both paths exist and are the same file.
+ */
+int pd_samefile(const char *path1, const char *path2)
+{
+	struct stat	st1, st2;
+
+	return stat(path1, &st1) == 0 && stat(path2, &st2) == 0
+	       && st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino;
+}
+
+struct pd_file {
+	int	fd;
+};
+
+/**********************************************************************
+ *
+ *	new_file
+ */
+static pd_file_t *new_file(int fd)
+{
+	pd_file_t	*f;
+
+	if (fd < 0) {
+		last_errno = errno;
+		return NULL;
+	}
+	f = pd_malloc(sizeof(pd_file_t));
+	f->fd = fd;
+	return f;
+}
+
+/**********************************************************************
+ *
+ *	pd_open
+ *
+ * Opens a file for reading.
+ */
+pd_file_t *pd_open(const char *path)
+{
+	return new_file(open(path, O_RDONLY));
+}
+
+/**********************************************************************
+ *
+ *	pd_create
+ *
+ * Creates a new file or truncates an existing one for writing.
+ */
+pd_file_t *pd_create(const char *path)
+{
+	return new_file(open(path, O_WRONLY|O_CREAT|O_TRUNC, 0666));
+}
+
+/**********************************************************************
+ *
+ *	pd_read
+ *
+ * Returns the number of bytes read, 0 at end of file or -1.
+ */
+int pd_read(pd_file_t *f, void *buf, int size)
+{
+	ssize_t	n;
+
+	while ((n = read(f->fd, buf, size)) < 0 && errno == EINTR)
+		;
+	if (n < 0)
+		last_errno = errno;
+	return (int)n;
+}
+
+/**********************************************************************
+ *
+ *	pd_write
+ *
+ * Returns size or -1.
+ */
+int pd_write(pd_file_t *f, const void *buf, int size)
+{
+	const char	*p = buf;
+	ssize_t		n;
+	int		left = size;
+
+	while (left > 0) {
+		n = write(f->fd, p, left);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0) {
+			last_errno = n < 0 ? errno : ENOSPC;
+			return -1;
+		}
+		p += n;
+		left -= (int)n;
+	}
+	return size;
+}
+
+/**********************************************************************
+ *
+ *	pd_close
+ *
+ * Closes the file. If attr is not NULL, sets the file time from it
+ * and the permissions, if mode in attr is not zero.
+ */
+int pd_close(pd_file_t *f, const pd_entry_t *attr)
+{
+	struct timespec	ts[2];
+	int		rc = 0;
+
+	if (attr != NULL) {
+		/* errors are ignored, not all file systems support these */
+		if (attr->mode != 0)
+			(void)fchmod(f->fd, attr->mode & 0777);
+		ts[0].tv_sec = 0;
+		ts[0].tv_nsec = UTIME_OMIT;
+		ts[1].tv_sec = (time_t)attr->mtime;
+		ts[1].tv_nsec = attr->mtime_ns;
+		futimens(f->fd, ts);
+	}
+	if (close(f->fd) != 0) {
+		last_errno = errno;
+		rc = -1;
+	}
+	free(f);
+	return rc;
 }
 
 /**********************************************************************

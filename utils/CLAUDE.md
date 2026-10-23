@@ -12,8 +12,9 @@ suffix avoids name clashes with the real Unix tools.
 |------|------|--------|
 | `lj.c` | `ls` clone | **In use.** Rewritten 2026 for Windows and POSIX |
 | `rj.c` | `rm` clone | **In use.** Rewritten 2026 for Windows and POSIX |
+| `cj.c` | `cp` clone, mostly for `-U`/`-D` line end translation | **In use.** Rewritten 2026 for Windows and POSIX |
 | `calcj.c` | interactive C expression calculator | **In use.** 64-bit ints (2025), portable (2026) |
-| `pdir.c` / `pdir.h` | portable directory/file/console layer used by the three above | |
+| `pdir.c` / `pdir.h` | portable directory/file/console layer used by the four above | |
 | `lcj.c`, `mj.c`, `teej.c`, `touchj.c` | line count, mv, tee, touch | Old, unmaintained, not built. They need the DOS-era `../lib` (filelist, getopt, conio) |
 
 The coding style is the original one: tab indentation, banner comments
@@ -22,14 +23,14 @@ before each function, `mode` struct for options. Match it.
 ## Build and test
 
 ```
-make                         # Linux/POSIX: lj, rj, calcj
+make                         # Linux/POSIX: lj, rj, cj, calcj
 make test                    # runs test.sh
 nmake -f makefile.win        # Windows, from a VS Developer Command Prompt
 nmake -f makefile.win test   # needs Git Bash on PATH
 ```
 
-`test.sh lj rj` runs in Linux and in Windows Git Bash. It creates a temp
-dir with a 5 GB file (length only), 3000 files, UTF-8 names, a path over
+`test.sh lj rj cj` runs in Linux and in Windows Git Bash (not WSL's
+`bash.exe`, which may come first on PATH). It creates a temp dir with a 5 GB file (length only), 3000 files, UTF-8 names, a path over
 MAX_PATH (needs python), a junction/symlink, and hidden/read-only files.
 Some checks are Windows-only. All must pass on both platforms.
 
@@ -50,7 +51,11 @@ reintroduce dependencies on `../lib`; put portable code in `pdir.c`.
 - `hidden` means Windows hidden/system attribute, or a dot name in POSIX.
 - `pd_match`: `*` and `?` only, `*.*` matches everything (DOS style),
   case insensitive in Windows, `?` matches one UTF-8 character.
-- Sizes and times are 64-bit.
+- Sizes and times are 64-bit. `pd_close(f, attr)` sets mtime (with
+  nanoseconds) and, if set in attr, POSIX mode or Windows read-only.
+- `pd_stat_follow` and `pd_samefile` follow links; `pd_samefile` uses
+  file ids (volume + index, dev + inode), so it works over
+  `\\wsl.localhost` and `/mnt/c`.
 
 ## lj (ls)
 
@@ -81,6 +86,25 @@ Options `-dfirs`. Differences from `rm`, kept on purpose:
   shell expands them and `-r` searches only those literal names.
 - The old `-m` menu option was removed (it needed DOS video code).
 Exit: 0 ok, 1 usage, 2 errors (including no match).
+
+## cj (cp)
+
+Options `-acfiostDU`. Copies files only, no `-r`.
+- `-U` translates CR+LF to LF, `-D` LF to CR+LF (an existing CR+LF is
+  kept). Done in cj itself, so both work in every system, also when
+  copying between Windows and `\\wsl.localhost` or `/mnt/c`.
+- Source and destination times are kept, also nanoseconds. Attributes
+  (POSIX mode, Windows read-only) are copied unless `-a`.
+- `-c` skips if time and size are equal (only time with `-U`/`-D`);
+  `-t` skips if destination is not older. Times are compared in seconds.
+- An existing destination asks for overwrite with a key press unless
+  `-o`, `-f` or `-i`. `-f` also overwrites read-only files.
+- Wildcards in sources are expanded by cj (Windows needs this) and match
+  only files; hidden files only with `-f`. No wildcards in destination.
+- Prints `cp src dest` unless `-s`; `No files copied` when copying to a
+  directory copies nothing. A failed copy removes the destination.
+- The old `-m` menu and disk full retry prompt were removed.
+Exit: 0 ok (also when nothing needed copying), 1 usage, 2 errors.
 
 ## calcj
 

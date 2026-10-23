@@ -1,17 +1,18 @@
 #!/bin/bash
 ######################################################################
 #
-#	Regression tests for lj and rj. Runs in Linux and in Windows
+#	Regression tests for lj, rj and cj. Runs in Linux and in Windows
 #	Git Bash. Creates a temporary directory, including a 5 GB file
 #	(not written, only its length is set) and a path longer than
 #	MAX_PATH. Needs python or python3 for the long path.
 #
-#	Usage: bash test.sh path/to/lj path/to/rj
+#	Usage: bash test.sh path/to/lj path/to/rj path/to/cj
 #
 ######################################################################
 
 LJ=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 RJ=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+CJ=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
 # avoid old custom tools earlier in PATH
 PATH=/usr/bin:/bin:$PATH
 export COLUMNS=80
@@ -153,6 +154,114 @@ EOF
 check "lj long path" "deep.txt" "$("$LJ" -1R long | tail -1)"
 check "lj long path header length > 300" 1 \
 	"$("$LJ" -1R long | tail -2 | head -1 | awk '{print (length($0) > 300)}')"
+
+######################################################################
+# cj
+
+mkdir -p cp/to
+cd cp
+printf 'hello\n' > a.txt
+touch -d '2001-02-03 04:05:06.1234567' a.txt
+check "cj output" "cp a.txt b.txt" "$("$CJ" a.txt b.txt)"
+check "cj content" "hello" "$(cat b.txt)"
+check "cj keeps time" "$(stat -c %y a.txt)" "$(stat -c %y b.txt)"
+check "cj -s output" "" "$("$CJ" -s a.txt to)"
+check "cj to dir" "hello" "$(cat to/a.txt)"
+check "cj to dir/" "cp a.txt to/a.txt" "$("$CJ" -o a.txt to/ | tr '\\' /)"
+"$CJ" -s a.txt a.txt 2>/dev/null
+check "cj onto itself rc" 2 $?
+"$CJ" -s a.txt ./a.txt 2>/dev/null
+check "cj onto itself ./ rc" 2 $?
+"$CJ" -s nothere b.txt 2>/dev/null
+check "cj not found rc" 2 $?
+"$CJ" -s a.txt b.txt nodir 2>/dev/null
+check "cj many to file rc" 2 $?
+"$CJ" -s a.txt nodir/ 2>/dev/null
+check "cj nodir/ rc" 2 "$?$([ -e nodir ] && echo yes)"
+"$CJ" -s to b.txt 2>/dev/null
+check "cj dir source rc" 2 $?
+"$CJ" -s a.txt 'x*' 2>/dev/null
+check "cj wildcard dest rc" 2 $?
+"$CJ" 2>/dev/null >/dev/null
+check "cj usage rc" 1 $?
+
+# -o, -c and -t
+printf 'other\n' > b.txt
+"$CJ" -so a.txt b.txt
+check "cj -o" "hello" "$(cat b.txt)"
+check "cj -c unchanged" "No files copied" "$("$CJ" -c a.txt to)"
+printf 'HELLO\n' > to/a.txt
+touch -d '2001-02-03 04:05:06.1234567' to/a.txt
+check "cj -c same size and time" "HELLO" "$("$CJ" -sc a.txt to; cat to/a.txt)"
+printf 'HI\n' > to/a.txt
+touch -d '2001-02-03 04:05:06.1234567' to/a.txt
+check "cj -c size differs" "hello" "$("$CJ" -sco a.txt to; cat to/a.txt)"
+touch -d '2005-01-01' to/a.txt
+check "cj -t dest newer" "" "$("$CJ" -t a.txt to/a.txt)"
+touch -d '2000-01-01' to/a.txt
+check "cj -t dest older" "cp a.txt to/a.txt" "$("$CJ" -to a.txt to/a.txt)"
+
+# line end translation, also over the copy buffer boundary
+printf 'a\r\nb\nc\r\r\nd\re\r' > dos.txt
+"$CJ" -sU dos.txt unix.txt
+check "cj -U" "$(printf 'a\nb\nc\r\nd\re\r' | od -c)" "$(od -c < unix.txt)"
+printf 'a\nb\r\nc\n' > u.txt
+"$CJ" -sD u.txt d.txt
+check "cj -D" "$(printf 'a\r\nb\r\nc\r\n' | od -c)" "$(od -c < d.txt)"
+{ head -c 262143 /dev/zero | tr '\0' x; printf '\r\nend\r\n'; } > big.txt
+{ head -c 262143 /dev/zero | tr '\0' x; printf '\nend\n'; } > big.exp
+"$CJ" -sU big.txt big.out
+check "cj -U buffer boundary" "same" "$(cmp -s big.exp big.out && echo same)"
+"$CJ" -sD big.out big.dos
+check "cj -D buffer boundary" "same" "$(cmp -s big.txt big.dos && echo same)"
+"$CJ" -sU big.txt to
+check "cj -c with -U ignores size" "No files copied" "$("$CJ" -cU big.txt to)"
+
+# wildcards, hidden files need -f
+mkdir w w2 w3
+: > w/x.c; : > w/y.c; : > w/z.h; mkdir w/sub.c
+if [ $WIN = 1 ]; then
+	: > w/h.c
+	attrib +h 'w\h.c' >/dev/null
+else
+	: > w/.h.c
+fi
+check "cj wildcard" "cp w/x.c w2/x.c
+cp w/y.c w2/y.c" "$("$CJ" 'w/*.c' w2 | tr '\\' /)"
+"$CJ" -sf 'w/*.c' w3
+check "cj -f wildcard hidden" 3 "$(ls -A w3 | wc -l | tr -d ' ')"
+"$CJ" -s 'w/*.none' w2 2>/dev/null
+check "cj no match rc" 2 $?
+
+# attributes
+: > ro.txt
+if [ $WIN = 1 ]; then
+	attrib +r ro.txt >/dev/null
+	"$CJ" -s ro.txt ro2.txt
+	check "cj keeps read-only" "R" "$(attrib ro2.txt | cut -c6)"
+	"$CJ" -sa ro.txt ro3.txt
+	check "cj -a writable" " " "$(attrib ro3.txt | cut -c6)"
+else
+	chmod 444 ro.txt
+	"$CJ" -s ro.txt ro2.txt
+	check "cj keeps mode" "444" "$(stat -c %a ro2.txt)"
+	"$CJ" -sa ro.txt ro3.txt
+	check "cj -a writable" "yes" "$([ -w ro3.txt ] && echo yes)"
+fi
+"$CJ" -so a.txt ro2.txt 2>/dev/null
+check "cj over read-only fails" 2 $?
+"$CJ" -sf a.txt ro2.txt
+check "cj -f over read-only" "hello" "$(cat ro2.txt)"
+cd ..
+
+# UTF-8 names and long paths
+"$CJ" -s "utf/äö_日本.txt" cp/to
+check "cj utf-8" "yes" "$([ -e "cp/to/äö_日本.txt" ] && echo yes)"
+deep=$("$LJ" -1R long | tail -2 | head -1 | sed 's/:$//')
+"$CJ" -s "$deep${S}deep.txt" cp
+check "cj from long path" "yes" "$([ -e cp/deep.txt ] && echo yes)"
+"$CJ" -s cp/a.txt "$deep"
+check "cj to long path" "a.txt deep.txt" "$("$LJ" -1 "$deep" | sort | tr '\n' ' ' | sed 's/ $//')"
 
 ######################################################################
 # rj
