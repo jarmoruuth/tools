@@ -2,7 +2,8 @@
  *
  *	WALK.H
  *
- * Collecting file names from directory trees for -r.
+ * Collecting file names from directory trees for -r, and expanding
+ * wildcards in Windows.
  *
 \**********************************************************************/
 
@@ -12,4 +13,4 @@ typedef struct {
 	int	size;		/* allocated size of names */
 } filelist_t;
 
-extern bool walk_path(filelist_t* fl, char* path);
+extern bool walk_path(filelist_t* fl, char* path, bool recursive);

@@ -1379,19 +1379,18 @@ int main(int argc, char* argv[])
 			show_fname = BLOCK;
 		else
 			show_fname = BEFORE_LINE;
-		if (recursive) {
+		{
 			filelist_t	fl = { NULL, 0, 0 };
 
-			/* without files search the current directory */
-			if (nfile == 0 && !walk_path(&fl, ""))
+			/* -r without files searches the current directory */
+			if (nfile == 0 && !walk_path(&fl, "", TRUE))
 				gp->file_not_found = TRUE;
 			for (; optind < argc; optind++)
-				if (!walk_path(&fl, argv[optind]))
+				if (!walk_path(&fl, argv[optind], recursive))
 					gp->file_not_found = TRUE;
 			if (fl.n > 0)
 				grep_files(gp, fl.names, fl.n);
-		} else
-			grep_files(gp, &argv[optind], nfile);
+		}
 	} else {
 		out_begin(gp, -1);
 		dgrep(gp, fileno(stdin));

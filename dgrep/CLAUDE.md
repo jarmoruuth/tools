@@ -53,7 +53,7 @@ references, exit codes, portability).
 | `set.c` / `set.h` | Bit-set routines used by the DFA construction |
 | `clib.c` | Buffer allocation (size + 1 bytes), `d_free`, `error` |
 | `getopt.c` / `getopt.h` | Portable `d_getopt` (prefixed so it never clashes with libc), used on all platforms |
-| `walk.c` / `walk.h` | Directory walking for `-r`: sorted entries, symlinks and special files skipped inside trees (POSIX `opendir`/`d_type`, Windows `FindFirstFileExA`) |
+| `walk.c` / `walk.h` | Directory walking for `-r`: sorted entries, symlinks and special files skipped inside trees (POSIX `opendir`/`d_type`, Windows `FindFirstFileExA`); in Windows also wildcard expansion of file arguments (`*`, `?` in the last component, case-insensitive; with `-r` matched in all subdirectories, so `dgrep -r x *.c` works) |
 | `system.h` | Platform detection and configuration, ASCII-only `IS_LOWER`/`TO_UPPER`/`CHCASE` macros |
 | `try.c` | Regex test driver, adapted from Henry Spencer's regexp test program |
 | `regress.sh` | Regression tests for the whole program (see Testing) |
@@ -101,8 +101,8 @@ internally). Optional defines:
 
 - **Linux / POSIX**: `make` (uses `cc`), `make test`
 - **Windows** (Developer Command Prompt for Visual Studio):
-  `nmake -f makefile.win`, `nmake -f makefile.win test`. Links the MSVC
-  `setargv.obj` for wildcard expansion of file names.
+  `nmake -f makefile.win`, `nmake -f makefile.win test`. Does not link
+  `setargv.obj`; `walk.c` expands wildcards (it would expand `-r` patterns only in the current directory, and also the regex argument).
 
 Both build `dgrep` and `try`; `test` also builds `dgrep-smallbuf`
 (`-DINITBUF=256`) and runs `regress.sh`. `bm.c` is the Boyer-Moore used on

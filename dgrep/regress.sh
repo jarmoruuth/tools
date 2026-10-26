@@ -201,6 +201,31 @@ if [ -z "$WINDOWS" ]; then
 tree/link/d/f.txt:match f"				'"$D" -r match tree/link'
 	rm -f tree/link tree/flink tree/fifo
 fi
+if [ -n "$WINDOWS" ]; then
+	# wildcards are expanded by dgrep, with -r in all subdirectories,
+	# file names ignoring case
+	mkdir -p wild/sub/deep
+	printf 'match 1\n' > wild/a.c
+	printf 'match 2\n' > wild/b.h
+	printf 'match 3\n' > wild/sub/c.C
+	printf 'match 4\n' > wild/sub/d.txt
+	printf 'match 5\n' > wild/sub/deep/e.c
+	printf 'match 6\n' > wild/sub/deep/noext
+	t "wildcard"		"a.c:match 1"	'(cd wild && "$D" match "*.c")'
+	t "wildcard dir"	"wild${S}sub${S}c.C:match 3"	'"$D" match "wild\\sub\\*.c"'
+	t "wildcard -r"		"a.c:match 1
+sub${S}c.C:match 3
+sub${S}deep${S}e.c:match 5"					'(cd wild && "$D" -r match "*.c")'
+	t "wildcard -r two"	"a.c:match 1
+sub${S}c.C:match 3
+sub${S}deep${S}e.c:match 5
+b.h:match 2"							'(cd wild && "$D" -r match "*.c" "*.h")'
+	t "wildcard -r dir"	"sub${S}deep${S}e.c:match 5
+sub${S}deep${S}noext:match 6"				'(cd wild && "$D" -r match "sub\\deep\\*.*")'
+	t "wildcard ?"		"b.h:match 2"	'(cd wild && "$D" match "?.h")'
+	s "wildcard no match"	2	'"$D" -s match "wild/*.xyz"'
+	t "wildcard not in pattern"	"a.c:1"	'(cd wild && "$D" -c "m*" a.c)'
+fi
 
 # binary files (a NUL byte): only a message by default, -a greps as
 # text, -I skips them

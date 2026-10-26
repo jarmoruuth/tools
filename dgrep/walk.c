@@ -8,6 +8,11 @@
  * special files (FIFOs, devices, ...) inside the trees are skipped;
  * a path given on the command line is followed.
  *
+ * In Windows the shell does not expand wildcards, so * and ? in the
+ * last component of a file name are expanded here. With -r the
+ * pattern matches file names in all subdirectories, so that
+ * "dgrep -r x *.c" searches all .c files in the tree.
+ *
 \**********************************************************************/
 
 #include "system.h"
@@ -69,7 +74,11 @@ static char* join_path(char* dir, char* name)
 	if ((path = malloc(dlen + strlen(name) + 2)) == NULL)
 		error("Out of memory", 3);
 	strcpy(path, dir);
-	if (dlen > 0 && dir[dlen-1] != '/' && dir[dlen-1] != PATHSEP)
+	if (dlen > 0 && dir[dlen-1] != '/' && dir[dlen-1] != PATHSEP
+#ifdef _WIN32
+	    && dir[dlen-1] != ':'	/* c:name is relative to drive c */
+#endif
+	    )
 		path[dlen++] = PATHSEP;
 	strcpy(path + dlen, name);
 	return path;
@@ -184,14 +193,48 @@ static bool read_dir(char* dir, entry_t** ents, int* n, int* size)
 }
 #endif
 
+#ifdef _WIN32
+/**********************************************************************
+ *
+ *	match_name
+ *
+ * Tests if name matches wildcard pattern pat (* and ?), ignoring
+ * case like Windows file names. "*.*" matches also names without
+ * a dot.
+ */
+static bool match_name(const char* pat, const char* name)
+{
+	if (strcmp(pat, "*.*") == 0)
+		return TRUE;
+	for (; *pat; pat++, name++) {
+		if (*pat == '*') {
+			while (*++pat == '*')
+				;
+			if (*pat == '\0')
+				return TRUE;
+			for (; *name; name++)
+				if (match_name(pat, name))
+					return TRUE;
+			return FALSE;
+		}
+		if (*name == '\0'
+		    || (*pat != '?' && TO_UPPER(*pat) != TO_UPPER(*name)))
+			return FALSE;
+	}
+	return *name == '\0';
+}
+#endif
+
 /**********************************************************************
  *
  *	walk_dir
  *
- * Adds the files in directory dir and its subdirectories to the list.
- * Returns FALSE if some directory could not be read.
+ * Adds the files in directory dir to the list, only those matching
+ * wildcard pattern pat if it is not NULL. If recursive, adds also the
+ * files in the subdirectories. Returns FALSE if some directory could
+ * not be read.
  */
-static bool walk_dir(filelist_t* fl, char* dir)
+static bool walk_dir(filelist_t* fl, char* dir, char* pat, bool recursive)
 {
 	entry_t*	ents = NULL;
 	int		n = 0;
@@ -203,15 +246,17 @@ static bool walk_dir(filelist_t* fl, char* dir)
 	ok = read_dir(dir, &ents, &n, &size);
 	qsort(ents, n, sizeof(entry_t), compare_entries);
 	for (i = 0; i < n; i++) {
-		if (ents[i].type != ENT_SKIP) {
+		if (ents[i].type == ENT_DIR && recursive) {
 			path = join_path(dir, ents[i].name);
-			if (ents[i].type == ENT_DIR) {
-				if (!walk_dir(fl, path))
-					ok = FALSE;
-				free(path);
-			} else
-				add_name(fl, path);
-		}
+			if (!walk_dir(fl, path, pat, recursive))
+				ok = FALSE;
+			free(path);
+		} else if (ents[i].type == ENT_FILE
+#ifdef _WIN32
+			   && (pat == NULL || match_name(pat, ents[i].name))
+#endif
+			   )
+			add_name(fl, join_path(dir, ents[i].name));
 		free(ents[i].name);
 	}
 	free(ents);
@@ -238,18 +283,55 @@ static bool is_dir(char* path)
 #endif
 }
 
+#ifdef _WIN32
+/**********************************************************************
+ *
+ *	walk_wildcard
+ *
+ * Adds the files matching wildcard path to the list. Returns FALSE
+ * if path has no wildcards in its last component.
+ */
+static bool walk_wildcard(filelist_t* fl, char* path, bool recursive)
+{
+	char*	pat = path + strlen(path);
+	char*	dir;
+	int	n = fl->n;
+
+	while (pat > path && pat[-1] != '/' && pat[-1] != PATHSEP
+	       && pat[-1] != ':')
+		pat--;
+	if (strpbrk(pat, "*?") == NULL)
+		return FALSE;
+	if ((dir = malloc(pat - path + 1)) == NULL)
+		error("Out of memory", 3);
+	memcpy(dir, path, pat - path);
+	dir[pat - path] = '\0';
+	walk_dir(fl, dir, pat, recursive);
+	free(dir);
+	/* no match: keep the name, opening it reports the error */
+	if (fl->n == n)
+		add_name(fl, path);
+	return TRUE;
+}
+#endif
+
 /**********************************************************************
  *
  *	walk_path
  *
- * Adds path to the list, or if it is a directory, the files under it.
- * Empty path means the current directory, and the names are then
- * relative to it. Returns FALSE if some directory could not be read.
+ * Adds path to the list. If recursive and path is a directory, adds
+ * the files under it instead. Empty path means the current directory,
+ * and the names are then relative to it. Returns FALSE if some
+ * directory could not be read.
  */
-bool walk_path(filelist_t* fl, char* path)
+bool walk_path(filelist_t* fl, char* path, bool recursive)
 {
-	if (path[0] == '\0' || is_dir(path))
-		return walk_dir(fl, path);
+#ifdef _WIN32
+	if (walk_wildcard(fl, path, recursive))
+		return TRUE;
+#endif
+	if (recursive && (path[0] == '\0' || is_dir(path)))
+		return walk_dir(fl, path, NULL, recursive);
 	add_name(fl, path);
 	return TRUE;
 }

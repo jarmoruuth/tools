@@ -24,13 +24,13 @@ DFAOBJ	= dfaregex.obj dfa.obj calcpos.obj dfatree.obj regmust.obj set.obj \
 DGREPOBJ = dgrep.obj bm.obj walk.obj $(DFAOBJ)
 TRYOBJ	= try.obj $(DFAOBJ)
 
-# setargv.obj comes with Visual C++ and expands wildcards in file names
-WILDARG	= setargv.obj
+# Wildcards in file names are expanded in walk.c, not with setargv.obj,
+# so that with -r they match files in subdirectories too
 
 all: dgrep.exe try.exe
 
 dgrep.exe: $(DGREPOBJ)
-	$(CC) $(CFLAGS) -Fedgrep.exe $(DGREPOBJ) $(WILDARG) $(LFLAGS)
+	$(CC) $(CFLAGS) -Fedgrep.exe $(DGREPOBJ) $(LFLAGS)
 
 try.exe: $(TRYOBJ)
 	$(CC) $(CFLAGS) -Fetry.exe $(TRYOBJ) $(LFLAGS)
@@ -38,7 +38,7 @@ try.exe: $(TRYOBJ)
 # dgrep with a tiny input buffer for testing buffer boundaries
 dgrep-smallbuf.exe: $(DGREPSRC) $(HEADERS)
 	if not exist smallbuf mkdir smallbuf
-	$(CC) $(CFLAGS) -DINITBUF=256 -Fosmallbuf\ -Fedgrep-smallbuf.exe $(DGREPSRC) $(WILDARG) $(LFLAGS)
+	$(CC) $(CFLAGS) -DINITBUF=256 -Fosmallbuf\ -Fedgrep-smallbuf.exe $(DGREPSRC) $(LFLAGS)
 
 $(DGREPOBJ) try.obj: $(HEADERS)
 
