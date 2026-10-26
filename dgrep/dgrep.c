@@ -22,7 +22,7 @@
 #include <emmintrin.h>
 #endif
 
-#define VERSION		"1.80"
+#define VERSION		"1.81"
 
 typedef enum {
 	STOP,
